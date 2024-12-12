@@ -369,7 +369,7 @@ def display_results(
 
         # Tags and Categories
         if tags := result.get("tags", []):
-            print("\n🏷️  Tags:")
+            print("\n🏷���  Tags:")
             print(f"   {', '.join(tags)}")
 
         if category := result.get("category"):
@@ -661,60 +661,111 @@ class APIEnrichment:
             content_lines = [line for line in content_lines if not line.strip().startswith('//')]
             content = '\n'.join(content_lines)
             
-            # Fix common JSON issues
-            content = content.replace('\\n', ' ')  # Replace newlines in strings
-            content = content.replace('\\"', '"')  # Fix double escaped quotes
-            content = content.replace('",}', '"}')  # Remove trailing commas
-            content = content.replace(',]', ']')    # Remove trailing commas in arrays
-            
-            # Fix property names not in quotes
-            import re
-            def quote_unquoted_keys(match):
-                key = match.group(1)
-                # Don't add quotes if already quoted
-                if key.startswith('"') and key.endswith('"'):
-                    return match.group(0)
-                return f'"{key}":'
-            
-            # Match property names that aren't in quotes
-            content = re.sub(r'([a-zA-Z_][a-zA-Z0-9_]*):', quote_unquoted_keys, content)
-            
-            # Fix single quotes to double quotes
-            content = content.replace("'", '"')
-            
-            # Fix spaces in property names
-            content = re.sub(r'"([^"]+)":', lambda m: f'"{m.group(1).replace(" ", "_")}":', content)
-            
-            # Remove any non-standard JSON syntax
-            content = re.sub(r'\/\*.*?\*\/', '', content, flags=re.DOTALL)  # Remove C-style comments
-            content = re.sub(r'[\t\n\r]+', ' ', content)  # Normalize whitespace
-            content = re.sub(r',\s*([}\]])', r'\1', content)  # Remove trailing commas
-            
-            # Ensure proper array and object closure
-            brackets = []
-            for char in content:
-                if char in '{[':
-                    brackets.append(char)
-                elif char in '}]':
-                    if not brackets:
-                        continue  # Skip unmatched closing brackets
-                    if (char == '}' and brackets[-1] == '{') or (char == ']' and brackets[-1] == '['):
-                        brackets.pop()
-            
-            # Close any unclosed brackets
-            while brackets:
-                last = brackets.pop()
-                content += '}' if last == '{' else ']'
-            
             try:
-                # Try to parse and re-serialize to ensure valid JSON
-                parsed = json.loads(content)
-                content = json.dumps(parsed)
-            except json.JSONDecodeError as e:
-                print(f"Warning: JSON cleaning failed. Error: {str(e)}")
-                print(f"Problematic content: {content[:200]}...")
-                raise
-            
+                # First attempt to parse as is
+                return json.dumps(json.loads(content))
+            except json.JSONDecodeError:
+                # If failed, try cleaning
+                try:
+                    # Fix nested quotes issues
+                    def fix_nested_quotes(text):
+                        # Replace escaped quotes with temporary markers
+                        text = text.replace('\\"', '§ESCAPED_QUOTE§')
+                        
+                        # Fix nested double quotes in values
+                        in_string = False
+                        result = []
+                        i = 0
+                        while i < len(text):
+                            char = text[i]
+                            if char == '"':
+                                if not in_string:
+                                    in_string = True
+                                    result.append(char)
+                                else:
+                                    # Check if this is the end of a string or a nested quote
+                                    if i + 1 < len(text) and text[i + 1] == ':':
+                                        # This is a property name end, keep it
+                                        in_string = False
+                                        result.append(char)
+                                    elif i + 1 < len(text) and text[i + 1] in ',}]':
+                                        # This is a value end, keep it
+                                        in_string = False
+                                        result.append(char)
+                                    else:
+                                        # This is a nested quote, replace with single quote
+                                        result.append("'")
+                            else:
+                                result.append(char)
+                            i += 1
+                        
+                        text = ''.join(result)
+                        # Restore escaped quotes
+                        return text.replace('§ESCAPED_QUOTE§', '\\"')
+                    
+                    # Clean the content
+                    content = fix_nested_quotes(content)
+                    
+                    # Fix common JSON issues
+                    content = content.replace('\\n', ' ')  # Replace newlines in strings
+                    content = content.replace('\\"', '"')  # Fix double escaped quotes
+                    content = content.replace('",}', '"}')  # Remove trailing commas
+                    content = content.replace(',]', ']')    # Remove trailing commas in arrays
+                    content = content.replace('""', '"')    # Fix double quotes
+                    content = content.replace(':"', ': "')  # Add space after colons
+                    content = content.replace('",', '", ')  # Add space after commas
+                    
+                    # Fix property names not in quotes
+                    import re
+                    def quote_unquoted_keys(match):
+                        key = match.group(1)
+                        if key.startswith('"') and key.endswith('"'):
+                            return match.group(0)
+                        return f'"{key}":'
+                    
+                    content = re.sub(r'([a-zA-Z_][a-zA-Z0-9_]*):', quote_unquoted_keys, content)
+                    
+                    # Fix spaces in property names
+                    content = re.sub(r'"([^"]+)":', lambda m: f'"{m.group(1).replace(" ", "_")}":', content)
+                    
+                    # Remove any non-standard JSON syntax
+                    content = re.sub(r'\/\*.*?\*\/', '', content, flags=re.DOTALL)  # Remove C-style comments
+                    content = re.sub(r'[\t\n\r]+', ' ', content)  # Normalize whitespace
+                    content = re.sub(r',\s*([}\]])', r'\1', content)  # Remove trailing commas
+                    
+                    # Ensure proper array and object closure
+                    brackets = []
+                    for char in content:
+                        if char in '{[':
+                            brackets.append(char)
+                        elif char in '}]':
+                            if not brackets:
+                                continue
+                            if (char == '}' and brackets[-1] == '{') or (char == ']' and brackets[-1] == '['):
+                                brackets.pop()
+                    
+                    while brackets:
+                        last = brackets.pop()
+                        content += '}' if last == '{' else ']'
+                    
+                    # Final parse and format
+                    parsed = json.loads(content)
+                    return json.dumps(parsed, indent=2)
+                    
+                except Exception as e:
+                    print(f"\nDetailed cleaning error:")
+                    print(f"Error type: {type(e).__name__}")
+                    print(f"Error message: {str(e)}")
+                    if isinstance(e, json.JSONDecodeError):
+                        print(f"Error position: line {e.lineno}, column {e.colno}")
+                        if e.doc:
+                            lines = e.doc.split('\n')
+                            if 0 <= e.lineno - 1 < len(lines):
+                                print("\nProblematic line:")
+                                print(lines[e.lineno - 1])
+                                print(' ' * (e.colno - 1) + '^')
+                    raise
+        
         return content
     
     def _validate_enrichment_schema(self, enrichment: Dict[str, Any]):
