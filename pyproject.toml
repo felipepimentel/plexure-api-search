@@ -11,6 +11,8 @@ sentence-transformers = "^3.3.1"
 pinecone-client = "^5.0.1"
 python-dotenv = "^1.0.0"
 httpx = "^0.28.1"
+demjson3 = "^3.0.6"
+rich = "^13.9.4"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.10.0"
