@@ -1,10 +1,6 @@
-# 🔍 Plexure API Search Engine
+# Plexure API Search
 
-A powerful semantic search engine for discovering and exploring APIs, enriched with AI-powered documentation and natural language understanding.
-
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Poetry](https://img.shields.io/badge/poetry-1.7%2B-blue.svg)](https://python-poetry.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+A powerful semantic search tool for API contracts with natural language understanding and rich visualization.
 
 ## 🏗️ Architecture & Program Flow
 
@@ -30,102 +26,92 @@ graph TD
     end
 ```
 
-### Key Components
-
-1. **API Ingestion** (`load_api_contracts`, `extract_endpoints`)
-   - Reads OpenAPI/Swagger YAML files
-   - Parses contract structure
-   - Extracts endpoints and metadata
-   - Validates contract format
-
-2. **Metadata Enrichment** (`APIEnrichment`)
-   - Uses LLM to enhance API documentation
-   - Generates example requests/responses
-   - Adds use cases and best practices
-   - Provides security and performance insights
-   - Implements retry mechanism for reliability
-   - Falls back to synthetic data if LLM fails
-
-3. **Vector Database** (Pinecone)
-   - Stores API embeddings
-   - Enables semantic search
-   - Supports hybrid filtering
-   - Manages metadata indexing
-
-4. **Query Understanding** (`QueryUnderstanding`)
-   - Parses natural language queries
-   - Extracts search parameters
-   - Identifies filters and preferences
-   - Converts to structured format
-
-5. **Search Engine** (`APISearchEngine`)
-   - Combines semantic and metadata search
-   - Ranks results by relevance
-   - Applies filters and scoring
-   - Manages search lifecycle
-
-6. **Results Display** (`display_results`)
-   - Formats search results
-   - Shows rich metadata
-   - Provides usage examples
-   - Highlights important information
-
 ### Program Flow
 
 1. **Initialization Phase**
-   ```mermaid
-   sequenceDiagram
-       participant User
-       participant Program
-       participant Pinecone
-       participant OpenRouter
-       
-       User->>Program: Start program
-       Program->>Program: Load environment
-       Program->>Pinecone: Initialize connection
-       Program->>Program: Parse arguments
-       alt Force Reindex
-           Program->>Program: Load API contracts
-           Program->>OpenRouter: Enrich metadata
-           Program->>Pinecone: Index endpoints
-       end
-   ```
+```mermaid
+sequenceDiagram
+    participant User
+    participant Program
+    participant Pinecone
+    participant OpenRouter
+    
+    User->>Program: Start program
+    Program->>Program: Load environment
+    Program->>Pinecone: Initialize connection
+    Program->>Program: Parse arguments
+    alt Force Reindex
+        Program->>Program: Load API contracts
+        Program->>OpenRouter: Enrich metadata
+        Program->>Pinecone: Index endpoints
+    end
+```
 
 2. **Search Phase**
-   ```mermaid
-   sequenceDiagram
-       participant User
-       participant Program
-       participant LLM
-       participant Pinecone
-       
-       User->>Program: Submit query
-       alt Natural Language Query
-           Program->>LLM: Parse query
-           LLM->>Program: Structured parameters
-       end
-       Program->>Pinecone: Search vectors
-       Pinecone->>Program: Raw results
-       Program->>Program: Format results
-       Program->>User: Display results
-   ```
+```mermaid
+sequenceDiagram
+    participant User
+    participant Program
+    participant LLM
+    participant Pinecone
+    
+    User->>Program: Submit query
+    alt Natural Language Query
+        Program->>LLM: Parse query
+        LLM->>Program: Structured parameters
+    end
+    Program->>Pinecone: Search vectors
+    Pinecone->>Program: Raw results
+    Program->>Program: Format results
+    Program->>User: Display results
+```
 
 ### Data Flow
 
 1. **API Contract Processing**
-   ```
-   YAML File → Parse Contract → Extract Endpoints → Enrich Metadata → Index
-   ```
+```
+YAML File → Parse Contract → Extract Endpoints → Enrich Metadata → Index
+```
 
 2. **Query Processing**
-   ```
-   User Query → Natural Language Understanding → Structured Query → Vector Search → Format Results
-   ```
+```
+User Query → Natural Language Understanding → Structured Query → Vector Search → Format Results
+```
 
 3. **Metadata Enrichment**
-   ```
-   Raw Endpoint → LLM Analysis → Enhanced Documentation → Validation → Storage
-   ```
+```
+Raw Endpoint → LLM Analysis → Enhanced Documentation → Validation → Storage
+```
+
+## Features
+
+### 🔍 Smart Search
+- Semantic search using sentence transformers
+- Natural language query understanding
+- Hybrid search combining vector similarity and metadata filters
+- Custom ranking based on multiple relevance factors
+- Support for version-specific searches
+
+### 🤖 LLM-Enhanced Analysis
+- Query intent analysis
+- Detailed relevance explanations
+- Smart result summaries
+- API metadata enrichment
+- Contextual suggestions
+
+### 📊 Rich Visualization
+- Color-coded HTTP methods
+- Feature icons and badges
+- Formatted parameter tables
+- Markdown support for descriptions
+- Comprehensive result panels
+
+### 🛠️ Technical Features
+- Vector embeddings with all-MiniLM-L6-v2
+- Pinecone vector database integration
+- OpenRouter LLM integration
+- YAML/OpenAPI contract parsing
+- Batch processing support
 
 ### Error Handling
 
@@ -169,145 +155,128 @@ The system implements robust error handling at multiple levels:
    - Memory-efficient processing
    - Timeout handling
 
-## ✨ Features
-
-### 🎯 Smart API Discovery
-- **Semantic Search**: Find APIs based on meaning, not just keywords
-- **Natural Language Queries**: Search using plain English (e.g., "find APIs with highest availability")
-- **Hybrid Search**: Combines semantic understanding with metadata filtering
-- **Rich Metadata**: Comprehensive API information including performance metrics, security details, and best practices
-
-### 🤖 AI-Powered Documentation
-- **Automatic Enrichment**: AI-generated documentation for clearer understanding
-- **Example Generation**: Realistic request/response examples
-- **Use Case Identification**: Suggested applications and business domains
-- **Security Analysis**: Automated security considerations and best practices
-- **Performance Insights**: Expected latency, throughput, and resource usage metrics
-
-### 📊 Advanced Filtering & Analysis
-- **Method Filtering**: Filter by HTTP method (GET, POST, etc.)
-- **Tag-based Search**: Find APIs by category or domain
-- **Performance Metrics**: Filter by availability, latency, and error rates
-- **Lifecycle State**: Focus on stable, beta, or deprecated APIs
-- **Smart Ranking**: Results ranked by relevance and quality metrics
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Python 3.8 or higher
-- [Poetry](https://python-poetry.org/) for dependency management
-- OpenRouter API key for AI features
-- Pinecone API key for vector search
-
-### Installation
+## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/plexure-api-search.git
+git clone https://github.com/felipepimentel/plexure-api-search.git
 cd plexure-api-search
 ```
 
-2. Install dependencies with Poetry:
+2. Install dependencies:
 ```bash
-# Install Poetry if you haven't already
-curl -sSL https://install.python-poetry.org | python3 -
-
-# Install project dependencies
-poetry install
+pip install -r requirements.txt
 ```
 
-3. Set up environment variables:
+3. Configure API keys in `constants.py`:
+```python
+OPENROUTER_API_KEY = "your_key_here"
+PINECONE_API_KEY = "your_key_here"
+```
+
+## Usage
+
+### Command Line Interface
+
+1. Index API contracts:
 ```bash
-cp .env.example .env
+# Index with default settings
+python -m plexure_api_search index
+
+# Force reindex
+python -m plexure_api_search index --force-reindex
+
+# Custom API directory
+python -m plexure_api_search index --api-dir /path/to/apis
 ```
 
-Edit `.env` with your API keys:
-```env
-OPENROUTER_API_KEY=your_openrouter_key
-PINECONE_API_KEY=your_pinecone_key
-PINECONE_ENVIRONMENT=your_pinecone_environment
-PINECONE_INDEX_NAME=your_index_name
-```
-
-### Quick Start
-
-1. Index your API contracts:
+2. Search APIs:
 ```bash
-poetry run python -m plexure_api_search --api-dir assets/apis --force-reindex
+# Basic search
+python -m plexure_api_search search "find authentication endpoints"
+
+# Direct module usage
+python -m plexure_api_search.searcher "find user management APIs"
 ```
 
-2. Search using natural language:
-```bash
-poetry run python -m plexure_api_search --query "find user authentication APIs" --natural
-```
-
-## 💡 Usage Examples
-
-### Basic Search
-```bash
-# Simple keyword search
-poetry run python -m plexure_api_search --query "user management"
-
-# Filter by HTTP method
-poetry run python -m plexure_api_search --query "create user" --method POST
-
-# Set minimum similarity score
-poetry run python -m plexure_api_search --query "payment processing" --min-score 0.7
-```
-
-### Natural Language Search
-```bash
-# Find high-availability APIs
-poetry run python -m plexure_api_search --natural --query "find APIs with highest availability"
-
-# Search with performance requirements
-poetry run python -m plexure_api_search --natural --query "show me fast authentication APIs with low latency"
-
-# Complex requirements
-poetry run python -m plexure_api_search --natural --query "find stable payment APIs with good documentation and example code"
-```
-
-### Advanced Options
-```bash
-# Force reindexing of APIs
-poetry run python -m plexure_api_search --force-reindex
-
-# Skip indexing and use existing index
-poetry run python -m plexure_api_search --skip-index
-
-# Specify custom API directory
-poetry run python -m plexure_api_search --api-dir /path/to/apis
-```
-
-## 🏗️ Project Structure
+### Module Structure
 
 ```
-plexure-api-search/
-├── plexure_api_search/
-│   ├── __init__.py
-│   └── __main__.py
-├── assets/
-│   └── apis/          # API contract files
-├── pyproject.toml     # Poetry configuration and dependencies
-├── poetry.lock       # Lock file for deterministic builds
-├── .env
-└── README.md
+plexure_api_search/
+├── __init__.py
+├── __main__.py      # Main entry point
+├── constants.py     # Configuration and constants
+├── indexer.py       # API ingestion and indexing
+└── searcher.py      # Search and display functionality
 ```
 
-## 🛠️ Configuration
+### Configuration
 
-The search engine can be configured through environment variables or command-line arguments:
+Key configurations in `constants.py`:
 
-| Parameter | Environment Variable | Default | Description |
-|-----------|---------------------|---------|-------------|
-| API Directory | - | assets/apis | Directory containing API contracts |
-| Min Score | - | 0.5 | Minimum similarity score (0-1) |
-| Top K | - | 5 | Number of results to return |
-| OpenRouter Key | OPENROUTER_API_KEY | - | API key for AI features |
-| Pinecone Key | PINECONE_API_KEY | - | API key for vector search |
+```python
+# Model Settings
+SENTENCE_TRANSFORMER_MODEL = "all-MiniLM-L6-v2"
+LLM_MODEL = "mistralai/mistral-7b-instruct"
 
-## 📝 API Contract Format
+# Search Settings
+DEFAULT_TOP_K = 5
+SCORE_ADJUSTMENTS = {
+    'version_match': 0.3,
+    'method_match': 0.2,
+    'path_match': 0.15,
+    'feature_match': 0.1,
+    'metadata_match': 0.1
+}
+
+# Visual Settings
+METHOD_COLORS = {
+    'GET': 'green',
+    'POST': 'blue',
+    'PUT': 'yellow',
+    # ...
+}
+```
+
+## Features in Detail
+
+### Query Analysis
+The tool analyzes natural language queries to understand:
+- Primary and secondary search goals
+- Required API versions
+- HTTP method preferences
+- Feature requirements
+- Authentication needs
+- Pagination preferences
+
+### Result Ranking
+Results are ranked based on multiple factors:
+- Vector similarity score
+- Version match
+- Method match
+- Path relevance
+- Feature matches
+- Metadata filters
+
+### Result Display
+Each result includes:
+- Method and path with color coding
+- Version information
+- Relevance score and explanation
+- Feature badges
+- Parameter details
+- Tags and metadata
+- Natural language description
+
+### Summary Generation
+The tool provides:
+- Overview of total results
+- Version distribution
+- Method distribution
+- Feature patterns
+- Refinement suggestions
+
+### API Contract Format
 
 The search engine expects API contracts in YAML format following the OpenAPI/Swagger specification. Example:
 
@@ -327,22 +296,21 @@ paths:
           description: Success
 ```
 
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
-- [Pinecone](https://www.pinecone.io/) for vector search capabilities
-- [OpenRouter](https://openrouter.ai/) for AI features
-- [sentence-transformers](https://www.sbert.net/) for semantic embeddings
+- [Sentence Transformers](https://www.sbert.net/) for embeddings
+- [Pinecone](https://www.pinecone.io/) for vector search
+- [OpenRouter](https://openrouter.ai/) for LLM integration
+- [Rich](https://rich.readthedocs.io/) for terminal formatting
