@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "plexure-api-search"
+version = "0.1.0"
+description = "A semantic search platform for APIs"
+authors = ["Felipe Pimentel <fpimentel88@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+sentence-transformers = "^3.3.1"
+pinecone-client = "^5.0.1"
+python-dotenv = "^1.0.0"
+httpx = "^0.28.1"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.10.0"
+ruff = "^0.8.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
