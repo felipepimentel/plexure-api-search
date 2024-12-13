@@ -192,7 +192,7 @@ class SearchEngine:
                 "score": 1.0,
                 "api_name": api["name"],
                 "version": api["version"],
-                "endpoint": "N/A",
+                "endpoint": api["endpoint"],
                 "description": f"API version {api['version']}",
             })
 
@@ -237,11 +237,29 @@ class SearchEngine:
         for api in self.api_data:
             api_version = str(api.get("version", ""))
             if self._version_matches(api_version, version):
-                matching_apis.append({
-                    "name": api.get("name", "Unknown"),
-                    "version": api_version,
-                    "description": api.get("description", ""),
-                })
+                # Load the API file to get endpoint information
+                try:
+                    with open(api["file_path"], "r") as f:
+                        data = yaml.safe_load(f)
+                    
+                    # Get the first endpoint path as an example
+                    paths = data.get("paths", {})
+                    endpoint = next(iter(paths.keys())) if paths else "/"
+                    
+                    matching_apis.append({
+                        "name": api.get("name", "Unknown"),
+                        "version": api_version,
+                        "description": api.get("description", ""),
+                        "endpoint": endpoint
+                    })
+                except Exception as e:
+                    self.logger.error(f"Failed to load endpoint data from {api['file_path']}: {e}")
+                    matching_apis.append({
+                        "name": api.get("name", "Unknown"),
+                        "version": api_version,
+                        "description": api.get("description", ""),
+                        "endpoint": "/"
+                    })
 
         return matching_apis
 
