@@ -10,11 +10,12 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
-from .config import API_DIR, PINECONE_API_KEY, PINECONE_ENVIRONMENT
+from .config import PINECONE_API_KEY, PINECONE_ENVIRONMENT
 from .config import PINECONE_INDEX as PINECONE_INDEX_NAME
 from .consistency import ProjectHealth
 from .expansion import QueryExpander
 from .indexer import APIIndexer
+from .pinecone_client import PineconeClient
 from .searcher import APISearcher
 from .understanding import ZeroShotUnderstanding
 
@@ -52,19 +53,32 @@ def cli():
 
 @cli.command()
 @click.option(
-    "--api-dir",
-    type=click.Path(exists=True),
-    default=API_DIR,
-    help="Directory containing API contracts",
+    "--force",
+    is_flag=True,
+    help="Force reindex all APIs",
 )
-@click.option("--force", is_flag=True, help="Force reindexing of all APIs")
-def index(api_dir: str, force: bool):
+def index(force: bool):
     """Index API contracts."""
-    config = load_config()
-    # Add api_dir to config for indexer
-    config["api_dir"] = api_dir
-    indexer = APIIndexer(**config)
-    indexer.index_apis(force=force)
+    try:
+        # Load configuration
+        config = load_config()
+
+        # Initialize Pinecone client
+        pinecone_client = PineconeClient(
+            api_key=config["api_key"],
+            environment=config["environment"],
+            index_name=config["index_name"],
+            cloud=config.get("cloud", "aws"),
+            region=config.get("region", "us-east-1"),
+        )
+
+        # Initialize and run indexer
+        indexer = APIIndexer(pinecone_client=pinecone_client)
+        indexer.index_apis(force=force)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise
 
 
 @cli.command()

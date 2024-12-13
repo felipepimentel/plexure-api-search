@@ -10,65 +10,25 @@ from .boosting import ContextualBooster
 from .understanding import ZeroShotUnderstanding
 from .expansion import QueryExpander
 from .quality import QualityMetrics, SearchResult, SearchEvaluation
+from .pinecone_client import PineconeClient
 
 
 class APISearcher:
     """Advanced API search engine with multiple strategies."""
     
-    def __init__(
-        self,
-        index_name: str,
-        api_key: str,
-        environment: str,
-        cloud: str = "aws",
-        region: str = "us-east-1"
-    ):
-        """Initialize searcher with advanced features.
+    def __init__(self, pinecone_client: PineconeClient):
+        """Initialize searcher.
         
         Args:
-            index_name: Name of the Pinecone index.
-            api_key: Pinecone API key.
-            environment: Pinecone environment.
-            cloud: Cloud provider (aws, gcp, azure).
-            region: Cloud region.
+            pinecone_client: PineconeClient instance
         """
-        if not api_key:
-            raise ValueError("Pinecone API key is required")
-        if not index_name:
-            raise ValueError("Pinecone index name is required")
-        if not environment:
-            raise ValueError("Pinecone environment is required")
-            
-        # Initialize Pinecone
-        try:
-            # Initialize Pinecone with the API key
-            pc = Pinecone(api_key=api_key)
-            
-            # Get index instance
-            self.index = pc.Index(index_name)
-            
-            # Verify connection
-            try:
-                stats = self.index.describe_index_stats()
-                print(f"\nIndex stats:")
-                print(f"Total vectors: {stats.get('total_vector_count', 0)}")
-                print(f"Dimension: {stats.get('dimension', 384)}")
-            except Exception as e:
-                print(f"Warning: Could not get index stats: {e}")
-                
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize Pinecone: {str(e)}")
-            
-        # Initialize advanced components
+        self.client = pinecone_client
         self.vectorizer = TripleVectorizer()
         self.booster = ContextualBooster()
         self.understanding = ZeroShotUnderstanding()
         self.expander = QueryExpander()
         self.metrics = QualityMetrics()
-        
-        # Search configuration
         self.top_k = 10
-        self.min_score = 0.5
         
     def search(
         self,
@@ -78,19 +38,14 @@ class APISearcher:
     ) -> List[Dict]:
         """Search for API endpoints."""
         try:
-            # Generate query vector
             query_vector = self.vectorizer.vectorize_query(query)
-            
-            # Perform search without namespace
-            results = self.index.query(
-                vector=query_vector,
+            results = self.client.search_vectors(
+                query_vector=query_vector,
                 top_k=self.top_k,
-                include_metadata=include_metadata,
-                filter=filters
+                filters=filters,
+                include_metadata=include_metadata
             )
-            
             return self._process_results(results)
-            
         except Exception as e:
             logger.error(f"Search failed: {e}")
             raise
