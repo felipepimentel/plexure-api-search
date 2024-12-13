@@ -75,126 +75,26 @@ class APISearcher:
         query: str,
         filters: Optional[Dict] = None,
         include_metadata: bool = True
-    ) -> Tuple[List[Dict], SearchEvaluation]:
-        """Perform advanced API search.
-        
-        Args:
-            query: Search query string.
-            filters: Optional filters for search.
-            include_metadata: Whether to include metadata in results.
-            
-        Returns:
-            Tuple of (search results, evaluation metrics).
-        """
-        start_time = time.time()
-        
+    ) -> List[Dict]:
+        """Search for API endpoints."""
         try:
-            # Expand query
-            expanded = self.expander.expand_query(query)
+            # Generate query vector
+            query_vector = self.vectorizer.vectorize_query(query)
             
-            # Generate triple vectors for query
-            query_vectors = self.vectorizer.vectorize({
-                'path': '',
-                'method': '',
-                'description': query,
-                'summary': expanded.original_query
-            })
-            
-            # Get contextual weights
-            weights = self.booster.adjust_weights(query)
-            
-            # Combine vectors with weights and convert to list
-            combined_vector = query_vectors.to_combined_vector(weights.to_dict())
-            if hasattr(combined_vector, 'tolist'):
-                combined_vector = combined_vector.tolist()
-            
-            # Debug print query vector
-            print("\nSearch query vector:")
-            print(f"Length: {len(combined_vector)}")
-            print(f"Sample: {combined_vector[:5]}...")
-            
-            # Perform search
-            search_results = self.index.query(
-                vector=combined_vector,
+            # Perform search without namespace
+            results = self.index.query(
+                vector=query_vector,
                 top_k=self.top_k,
                 include_metadata=include_metadata,
                 filter=filters
             )
             
-            print(f"\nFound {len(search_results.matches)} matches")
-            
-            # Process results
-            results = []
-            search_eval_results = []
-            
-            for i, match in enumerate(search_results.matches, 1):
-                try:
-                    # Extract metadata
-                    metadata = match.metadata if include_metadata else {}
-                    
-                    # Debug print raw metadata
-                    print(f"\nRaw metadata for result {i}:")
-                    print(json.dumps(metadata, indent=2))
-                    
-                    # Create result object with rich metadata
-                    result = {
-                        'endpoint_id': match.id,
-                        'score': match.score,
-                        'api_name': metadata.get('api_name', 'N/A'),
-                        'api_version': metadata.get('api_version', 'N/A'),
-                        'path': metadata.get('path', 'N/A'),
-                        'method': metadata.get('method', 'N/A'),
-                        'description': metadata.get('description', 'N/A'),
-                        'summary': metadata.get('summary', ''),
-                        'parameters': metadata.get('parameters', []),
-                        'responses': metadata.get('responses', {}),
-                        'tags': metadata.get('tags', []),
-                        'operationId': metadata.get('operationId', ''),
-                        'deprecated': metadata.get('deprecated', 'false') == 'true',
-                        'security': metadata.get('security', []),
-                        'requires_auth': metadata.get('requires_auth', 'false') == 'true',
-                        'full_path': metadata.get('full_path', 'N/A')
-                    }
-                    
-                    # Debug print processed result
-                    print(f"\nProcessed result {i}:")
-                    print(json.dumps(result, indent=2))
-                    
-                    results.append(result)
-                    
-                    # Create evaluation result
-                    search_eval_results.append(SearchResult(
-                        endpoint_id=match.id,
-                        score=match.score,
-                        rank=i,
-                        is_relevant=match.score >= self.min_score
-                    ))
-                    
-                except Exception as e:
-                    print(f"Error processing search result {i}: {e}")
-                    print(f"Raw match data: {match}")
-                    continue
-            
-            # Calculate latency
-            latency_ms = (time.time() - start_time) * 1000
-            
-            # Evaluate search quality
-            evaluation = self.metrics.evaluate_search(
-                query=query,
-                results=search_eval_results,
-                total_relevant=len([r for r in search_eval_results if r.is_relevant]),
-                latency_ms=latency_ms
-            )
-            
-            # Record search for contextual learning
-            self.booster.record_search(query)
-            
-            return results, evaluation
+            return self._process_results(results)
             
         except Exception as e:
-            print(f"Search error: {e}")
-            raise RuntimeError(f"Search failed: {str(e)}")
-            
+            logger.error(f"Search failed: {e}")
+            raise
+        
     def update_feedback(
         self,
         query: str,

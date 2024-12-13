@@ -2,10 +2,10 @@
 
 import glob
 import json
+import logging
 import os
 import time
 from typing import Dict, List
-import logging
 
 import yaml
 from pinecone import Pinecone, ServerlessSpec
@@ -127,248 +127,192 @@ class APIIndexer:
         return api_files
 
     def _extract_endpoints(self, api_spec: Dict) -> List[Dict]:
-        """Extract endpoints from API specification.
-        
-        Args:
-            api_spec: Loaded API specification dictionary
-            
-        Returns:
-            List of endpoint dictionaries
-        """
+        """Extract endpoints from API specification."""
         endpoints = []
-        
+
         try:
             # Extract API info
             api_name = api_spec.get("info", {}).get("title", "Unknown API")
             api_version = api_spec.get("info", {}).get("version", "1.0.0")
-            
+
             # Get paths
             paths = api_spec.get("paths", {})
-            
+
             # Process each path
             for path, path_data in paths.items():
-                # Process each method (GET, POST, etc)
+                # Process each method
                 for method, endpoint_data in path_data.items():
                     if method.upper() not in ["GET", "POST", "PUT", "DELETE", "PATCH"]:
                         continue
-                        
-                    # Extract parameters
-                    parameters = endpoint_data.get("parameters", [])
-                    
-                    # Extract responses
-                    responses = endpoint_data.get("responses", {})
-                    
-                    # Extract security requirements
-                    security = endpoint_data.get("security", [])
-                    
-                    # Get description, falling back to summary if empty
-                    description = endpoint_data.get("description", "")
-                    if not description.strip():
-                        description = endpoint_data.get("summary", "")
-                    
-                    # Create endpoint object with rich metadata
+
+                    # Create endpoint object
                     endpoint = {
                         "api_name": api_name,
                         "api_version": api_version,
                         "path": path,
                         "method": method.upper(),
-                        "description": description,
+                        "description": endpoint_data.get("description", ""),
                         "summary": endpoint_data.get("summary", ""),
-                        "parameters": parameters,
-                        "responses": responses,
+                        "parameters": endpoint_data.get("parameters", []),
+                        "responses": endpoint_data.get("responses", {}),
                         "tags": endpoint_data.get("tags", []),
                         "operationId": endpoint_data.get("operationId", ""),
-                        "deprecated": str(endpoint_data.get("deprecated", False)),
-                        "security": security,
-                        "full_path": f"{api_name}/{path}",
-                        "requires_auth": str(bool(security)).lower()
+                        "deprecated": endpoint_data.get("deprecated", False),
+                        "security": endpoint_data.get("security", []),
+                        "requires_auth": bool(endpoint_data.get("security", [])),
+                        "full_path": f"{api_name}{path}",
                     }
-                    
+
                     logger.info(f"Found endpoint: {method.upper()} {path}")
                     endpoints.append(endpoint)
-                    
+
         except Exception as e:
             logger.error(f"Error extracting endpoints: {str(e)}")
             raise
-            
+
         logger.info(f"Extracted {len(endpoints)} endpoints")
         return endpoints
 
-    def _sanitize_metadata(self, metadata: Dict) -> Dict:
-        """Sanitize metadata to match Pinecone requirements.
-        
-        Args:
-            metadata: Original metadata dictionary
-            
-        Returns:
-            Sanitized metadata dictionary
-        """
-        sanitized = {}
-        
-        for key, value in metadata.items():
-            if key == "parameters":
-                # Convert parameters to list of strings
-                param_list = []
-                for param in value:
-                    param_str = f"{param.get('name', '')}:{param.get('in', '')}:{param.get('description', '')}"
-                    param_list.append(param_str)
-                sanitized[key] = param_list
-            elif key == "responses":
-                # Convert responses to list of strings
-                resp_list = []
-                for code, details in value.items():
-                    resp_str = f"{code}:{details.get('description', '')}"
-                    resp_list.append(resp_str)
-                sanitized[key] = resp_list
-            elif key == "security":
-                # Convert security to string
-                sanitized[key] = str(value)
-            elif isinstance(value, (str, int, float, bool)):
-                # Keep primitive types as is
-                sanitized[key] = value
-            elif isinstance(value, list):
-                # Convert list items to strings
-                sanitized[key] = [str(item) for item in value]
-            else:
-                # Convert other types to string
-                sanitized[key] = str(value)
-                
-        return sanitized
+    def _prepare_metadata(self, endpoint: Dict) -> Dict:
+        """Prepare metadata for indexing."""
+        return {
+            "api_name": str(endpoint["api_name"]),
+            "api_version": str(endpoint["api_version"]),
+            "path": str(endpoint["path"]),
+            "method": str(endpoint["method"]),
+            "description": str(endpoint["description"]),
+            "summary": str(endpoint["summary"]),
+            "parameters": [str(p) for p in endpoint["parameters"]],
+            "responses": [str(r) for r in endpoint["responses"]],
+            "tags": [str(t) for t in endpoint["tags"]],
+            "operationId": str(endpoint["operationId"]),
+            "deprecated": str(endpoint["deprecated"]).lower(),
+            "security": [str(s) for s in endpoint["security"]],
+            "requires_auth": str(endpoint["requires_auth"]).lower(),
+            "full_path": str(endpoint["full_path"]),
+        }
 
     def index_apis(self, force: bool = False) -> None:
-        """Index API contracts.
-        
-        Args:
-            force: Whether to force reindexing of all APIs.
-        """
+        """Index API contracts."""
         try:
             logger.info("Starting API indexation...")
-            
+
             if force:
                 logger.info("Force reindex requested. Cleaning up...")
                 try:
-                    logger.info("Deleting existing index...")
+                    # Delete all vectors without namespace
                     self.index.delete(delete_all=True)
-                    logger.info("Waiting for deletion to complete...")
-                    time.sleep(5)
-                    
-                    # Verify deletion
-                    stats = self.index.describe_index_stats()
-                    total_vectors = stats.get("total_vector_count", 0)
-                    logger.info(f"Vectors after deletion: {total_vectors}")
-                    
-                    if total_vectors > 0:
-                        logger.warning("Index not fully cleared. Retrying deletion...")
-                        self.index.delete(delete_all=True)
-                        time.sleep(5)
-                        stats = self.index.describe_index_stats()
-                        logger.info(f"Vectors after second deletion attempt: {stats.get('total_vector_count', 0)}")
+                    time.sleep(2)  # Wait for deletion
                 except Exception as e:
                     logger.warning(f"Could not clear index: {e}")
-                    logger.info("Continuing with indexing...")
-            
-            api_files = glob.glob(os.path.join(self.api_dir, "**/*.yaml"), recursive=True)
+
+            # Find API files
+            api_files = glob.glob(
+                os.path.join(self.api_dir, "**/*.yaml"), recursive=True
+            )
             logger.info(f"Found {len(api_files)} API files to process")
-            
-            all_vectors = []
-            successful_upserts = 0
-            
+
+            total_vectors = 0
+            batch_size = 10
+            vectors_batch = []
+
+            # Process each API file
             for api_file in api_files:
                 try:
+                    # Load and parse API spec
                     with open(api_file) as f:
                         api_spec = yaml.safe_load(f)
-                        
+
+                    # Extract endpoints
                     endpoints = self._extract_endpoints(api_spec)
-                    
-                    # Processar endpoints em lotes menores
-                    batch_size = 10  # Reduzindo o tamanho do lote
-                    current_batch = []
-                    
-                    for i, endpoint in enumerate(endpoints):
+
+                    # Process each endpoint
+                    for endpoint in endpoints:
                         try:
-                            triple_vector = self.vectorizer.vectorize(endpoint)
-                            combined_vector = triple_vector.to_combined_vector()
-                            
-                            sanitized_metadata = self._sanitize_metadata(endpoint)
-                            
-                            vector = {
-                                "id": f"{os.path.basename(api_file)}_{i}",
+                            # Create vector
+                            vector = self.vectorizer.vectorize(endpoint)
+                            combined_vector = vector.to_combined_vector()
+
+                            # Create unique ID
+                            vector_id = f"{endpoint['api_name']}_{endpoint['method']}_{endpoint['path']}"
+                            vector_id = (
+                                vector_id.replace("/", "_")
+                                .replace("{", "")
+                                .replace("}", "")
+                            )
+
+                            # Prepare metadata
+                            metadata = self._prepare_metadata(endpoint)
+
+                            # Create vector entry
+                            vector_entry = {
+                                "id": vector_id,
                                 "values": combined_vector.tolist(),
-                                "metadata": sanitized_metadata
+                                "metadata": metadata,
                             }
-                            
-                            current_batch.append(vector)
-                            logger.info(f"Created vector for endpoint {i}: {endpoint['method']} {endpoint['path']}")
-                            
-                            # Quando o lote estiver cheio, fazer o upsert
-                            if len(current_batch) >= batch_size:
+
+                            vectors_batch.append(vector_entry)
+
+                            # Upsert when batch is full
+                            if len(vectors_batch) >= batch_size:
                                 try:
-                                    logger.info(f"Upserting batch of {len(current_batch)} vectors...")
-                                    self.index.upsert(vectors=current_batch)
-                                    successful_upserts += len(current_batch)
-                                    logger.info(f"Successfully upserted batch. Total: {successful_upserts}")
-                                    
-                                    # Verificar se os vetores foram realmente inseridos
-                                    time.sleep(1)  # Dar tempo para o índice atualizar
-                                    stats = self.index.describe_index_stats()
-                                    logger.info(f"Current vector count: {stats.get('total_vector_count', 0)}")
-                                    
-                                    current_batch = []  # Limpar o lote atual
+                                    # Upsert without namespace
+                                    self.index.upsert(vectors=vectors_batch)
+                                    total_vectors += len(vectors_batch)
+                                    logger.info(
+                                        f"Upserted batch of {len(vectors_batch)} vectors. Total: {total_vectors}"
+                                    )
+                                    vectors_batch = []
                                 except Exception as e:
-                                    logger.error(f"Error upserting batch: {str(e)}")
-                                    logger.error("Will retry with smaller batch size")
-                                    
-                                    # Tentar upsert um por um
-                                    for v in current_batch:
+                                    logger.error(f"Batch upsert failed: {e}")
+                                    # Try one by one
+                                    for v in vectors_batch:
                                         try:
                                             self.index.upsert(vectors=[v])
-                                            successful_upserts += 1
-                                            time.sleep(0.5)
+                                            total_vectors += 1
                                         except Exception as e:
-                                            logger.error(f"Error upserting single vector: {str(e)}")
-                                    
-                                    current_batch = []
-                        
+                                            logger.error(
+                                                f"Single vector upsert failed: {e}"
+                                            )
+                                    vectors_batch = []
+
                         except Exception as e:
-                            logger.error(f"Error processing endpoint {i}: {str(e)}")
+                            logger.error(f"Error processing endpoint: {e}")
                             continue
-                    
-                    # Upsert qualquer vetor restante no lote
-                    if current_batch:
-                        try:
-                            logger.info(f"Upserting final batch of {len(current_batch)} vectors...")
-                            self.index.upsert(vectors=current_batch)
-                            successful_upserts += len(current_batch)
-                            logger.info(f"Successfully upserted final batch. Total: {successful_upserts}")
-                        except Exception as e:
-                            logger.error(f"Error upserting final batch: {str(e)}")
-                            # Tentar upsert um por um
-                            for v in current_batch:
-                                try:
-                                    self.index.upsert(vectors=[v])
-                                    successful_upserts += 1
-                                    time.sleep(0.5)
-                                except Exception as e:
-                                    logger.error(f"Error upserting single vector: {str(e)}")
-                
+
                 except Exception as e:
-                    logger.error(f"Error processing API file {api_file}: {str(e)}")
+                    logger.error(f"Error processing file {api_file}: {e}")
                     continue
-            
-            # Verificar estado final
-            logger.info("\nVerifying final index state...")
-            time.sleep(2)  # Dar mais tempo para o índice atualizar
+
+            # Upsert remaining vectors
+            if vectors_batch:
+                try:
+                    self.index.upsert(vectors=vectors_batch)
+                    total_vectors += len(vectors_batch)
+                    logger.info(
+                        f"Upserted final batch of {len(vectors_batch)} vectors. Total: {total_vectors}"
+                    )
+                except Exception as e:
+                    logger.error(f"Final batch upsert failed: {e}")
+                    # Try one by one
+                    for v in vectors_batch:
+                        try:
+                            self.index.upsert(vectors=[v])
+                            total_vectors += 1
+                        except Exception as e:
+                            logger.error(f"Single vector upsert failed: {e}")
+
+            # Verify final state
+            time.sleep(2)  # Wait for index to update
             stats = self.index.describe_index_stats()
-            total_vectors = stats.get("total_vector_count", 0)
-            
-            if total_vectors != successful_upserts:
-                logger.warning(f"Vector count mismatch. Expected: {successful_upserts}, Found: {total_vectors}")
-                logger.warning("Retrying verification after delay...")
-                time.sleep(5)
-                stats = self.index.describe_index_stats()
-                total_vectors = stats.get("total_vector_count", 0)
-                logger.info(f"Final vector count after delay: {total_vectors}")
-                
+            final_count = stats.get("total_vector_count", 0)
+            logger.info(f"Final vector count: {final_count}")
+
+            if final_count != total_vectors:
+                logger.warning(
+                    f"Vector count mismatch. Expected: {total_vectors}, Found: {final_count}"
+                )
+
         except Exception as e:
-            logger.error(f"Fatal error during indexing: {str(e)}")
+            logger.error(f"Indexing failed: {e}")
             raise
