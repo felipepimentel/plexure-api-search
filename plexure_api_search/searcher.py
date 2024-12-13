@@ -334,12 +334,17 @@ class SearchEngine:
         """
         enriched = []
         for result in results:
+            # Get metadata directly from the match
             metadata = result.get("metadata", {})
+            
+            # Handle nested API info
+            api_info = metadata.get("api", {})
+            
             enriched.append({
                 "score": result.get("score", 0.0),
-                "api_name": metadata.get("api_name", "N/A"),
-                "version": metadata.get("version", "N/A"),
+                "api_name": api_info.get("name", "N/A"),
+                "version": api_info.get("version", "N/A"),
                 "endpoint": metadata.get("endpoint", "N/A"),
-                "description": metadata.get("description", "N/A"),
+                "description": metadata.get("description", "") or metadata.get("summary", "No description provided."),
             })
         return enriched

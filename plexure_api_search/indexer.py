@@ -357,50 +357,73 @@ class APIIndexer:
             with open(file_path, "r") as f:
                 api_spec = yaml.safe_load(f)
 
-            # Extract version from file path or spec
-            version = api_spec.get("version", "1.0.0")
+            if not isinstance(api_spec, dict):
+                return []
+
+            # Extract API info
+            info = api_spec.get("info", {})
+            api_name = info.get("title", os.path.splitext(os.path.basename(file_path))[0])
+            version = info.get("version", "1.0.0")
+            api_description = info.get("description", "")
 
             # Process paths
             paths = api_spec.get("paths", {})
             for path, methods in paths.items():
+                if not isinstance(methods, dict):
+                    continue
+                    
                 for method, details in methods.items():
-                    if method.upper() in ["GET", "POST", "PUT", "DELETE", "PATCH"]:
-                        # Create base endpoint data
-                        endpoint_data = {
-                            "path": path,
-                            "method": method.upper(),
-                            "description": details.get("description", ""),
-                            "summary": details.get("summary", ""),
-                            "parameters": details.get("parameters", []),
-                            "tags": details.get("tags", []),
-                            "api_version": version,
-                            "file_path": file_path,
-                            "last_modified": datetime.fromtimestamp(
-                                os.path.getmtime(file_path)
-                            ).isoformat(),
-                        }
+                    if not isinstance(details, dict):
+                        continue
+                        
+                    if method.upper() not in ["GET", "POST", "PUT", "DELETE", "PATCH"]:
+                        continue
 
-                        # Validate and normalize
-                        endpoint_data = self.validator.validate_and_normalize(
-                            endpoint_data
-                        )
+                    # Get operation details
+                    summary = details.get("summary", "")
+                    description = details.get("description", "") or summary or api_description
+                    tags = details.get("tags", [])
+                    operation_id = details.get("operationId", "")
 
-                        # Create signature
-                        signature = EndpointSignature(
-                            path=endpoint_data["path"],
-                            method=endpoint_data["method"],
-                            version=endpoint_data["api_version"],
-                        )
+                    # Create base endpoint data
+                    endpoint_data = {
+                        "path": path,
+                        "method": method.upper(),
+                        "description": description,
+                        "summary": summary,
+                        "parameters": details.get("parameters", []),
+                        "tags": tags,
+                        "api_version": version,
+                        "api_name": api_name,
+                        "endpoint": f"{method.upper()} {path}",
+                        "operation_id": operation_id,
+                        "file_path": file_path,
+                        "last_modified": datetime.fromtimestamp(
+                            os.path.getmtime(file_path)
+                        ).isoformat(),
+                    }
 
-                        # Skip if already indexed
-                        if signature in self.indexed_signatures:
-                            continue
+                    # Validate and normalize
+                    endpoint_data = self.validator.validate_and_normalize(
+                        endpoint_data
+                    )
 
-                        # Enrich with metadata
-                        endpoint_data = self.enricher.enrich_metadata(endpoint_data)
+                    # Create signature
+                    signature = EndpointSignature(
+                        path=endpoint_data["path"],
+                        method=endpoint_data["method"],
+                        version=endpoint_data["api_version"],
+                    )
 
-                        endpoints.append(endpoint_data)
-                        self.indexed_signatures.add(signature)
+                    # Skip if already indexed
+                    if signature in self.indexed_signatures:
+                        continue
+
+                    # Enrich with metadata
+                    endpoint_data = self.enricher.enrich_metadata(endpoint_data)
+
+                    endpoints.append(endpoint_data)
+                    self.indexed_signatures.add(signature)
 
             # Update index cache
             self.index_cache["last_indexed"][file_path] = time.time()
@@ -415,7 +438,18 @@ class APIIndexer:
         try:
             # Check if index exists and has data
             stats = self.index.describe_index_stats()
-            if not force_reindex and stats["total_vector_count"] > 0:
+            
+            # If force_reindex, delete all vectors
+            if force_reindex and stats["total_vector_count"] > 0:
+                self.index.delete(delete_all=True)
+                # Reset cache
+                self.index_cache = {
+                    "last_indexed": {},
+                    "file_hashes": {},
+                    "embedding_stats": {"mean": None, "std": None},
+                }
+                self.indexed_signatures.clear()
+            elif not force_reindex and stats["total_vector_count"] > 0:
                 self.console.print("\nUsing existing Pinecone index")
                 return
 
@@ -479,14 +513,37 @@ class APIIndexer:
                     batch = all_endpoints[i : i + self.config.batch_size]
                     batch_embeddings = embeddings[i : i + self.config.batch_size]
 
+                    # Print first endpoint metadata for debugging
+                    if i == 0:
+                        self.console.print("\nFirst endpoint metadata:")
+                        endpoint = batch[0]
+                        self.console.print(f"API Name: {endpoint.get('api_name', 'N/A')}")
+                        self.console.print(f"Version: {endpoint.get('api_version', 'N/A')}")
+                        self.console.print(f"Endpoint: {endpoint.get('endpoint', 'N/A')}")
+                        self.console.print(f"Description: {endpoint.get('description', 'N/A')}")
+
                     vectors = [
                         (
                             f"{endpoint['method']}_{endpoint['path']}",
                             embedding.tolist(),
-                            endpoint,
+                            flatten_metadata({
+                                "api_name": endpoint["api_name"],
+                                "api_version": endpoint["api_version"],
+                                "endpoint": endpoint["endpoint"],
+                                "description": endpoint["description"],
+                                "summary": endpoint["summary"],
+                                "method": endpoint["method"],
+                                "path": endpoint["path"],
+                                "tags": endpoint["tags"],
+                            }),
                         )
                         for endpoint, embedding in zip(batch, batch_embeddings)
                     ]
+
+                    # Print first vector metadata for debugging
+                    if i == 0:
+                        self.console.print("\nFirst vector metadata:")
+                        self.console.print(vectors[0][2])
 
                     # Upsert batch to Pinecone
                     self.index.upsert(vectors=vectors)
