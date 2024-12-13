@@ -214,6 +214,24 @@ class TripleVectorizer:
         """
         return [self.vectorize(endpoint) for endpoint in endpoints] 
 
+    def vectorize_query(self, query: str) -> List[float]:
+        """Vectorize a search query.
+        
+        Args:
+            query: Search query string
+            
+        Returns:
+            Combined vector representation
+        """
+        # Create embeddings for query
+        embeddings = self.semantic_model.encode(query)
+        
+        # Convert to list if needed
+        if hasattr(embeddings, 'tolist'):
+            embeddings = embeddings.tolist()
+            
+        return embeddings
+
 def create_embeddings(text):
     logger.info(f"Creating embedding for text: {text[:100]}...")
     # Rest of the code... 

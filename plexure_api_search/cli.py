@@ -1,6 +1,7 @@
 """Command line interface for API search."""
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict
@@ -22,8 +23,9 @@ from .understanding import ZeroShotUnderstanding
 # Load environment variables
 load_dotenv()
 
-# Initialize console
+# Initialize console and logger
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 def load_config() -> Dict[str, Any]:
@@ -84,70 +86,71 @@ def index(force: bool):
 @cli.command()
 @click.argument("query")
 @click.option("--top-k", default=10, help="Number of results to return")
-@click.option(
-    "--include-metadata", is_flag=True, help="Include full metadata in results"
-)
 @click.option("--analyze", is_flag=True, help="Show query analysis")
-def search(query: str, top_k: int, include_metadata: bool, analyze: bool):
+def search(query: str, top_k: int, analyze: bool):
     """Search for API endpoints."""
-    config = load_config()  # Will only get searcher-specific config
-    searcher = APISearcher(**config)
+    try:
+        # Load configuration
+        config = load_config()
 
-    if analyze:
-        analysis = searcher.analyze_query(query)
-        console.print("\n[bold]Query Analysis:[/bold]")
-        for key, value in analysis.items():
-            console.print(f"[cyan]{key}:[/cyan] {value}")
-        console.print()
+        # Initialize Pinecone client
+        pinecone_client = PineconeClient(
+            api_key=config["api_key"],
+            environment=config["environment"],
+            index_name=config["index_name"],
+            cloud=config.get("cloud", "aws"),
+            region=config.get("region", "us-east-1"),
+        )
 
-    results, evaluation = searcher.search(
-        query=query, include_metadata=include_metadata
-    )
+        # Initialize searcher
+        searcher = APISearcher(pinecone_client=pinecone_client)
 
-    # Display results
-    table = Table(title="Search Results")
-    table.add_column("Score", justify="right", style="cyan", no_wrap=True)
-    table.add_column("API", style="green")
-    table.add_column("Version", style="yellow")
-    table.add_column("Method", style="magenta", no_wrap=True)
-    table.add_column("Path", style="blue")
-    table.add_column("Description", style="white")
+        if analyze:
+            analysis = searcher.analyze_query(query)
+            console.print("\n[bold]Query Analysis:[/bold]")
+            for key, value in analysis.items():
+                console.print(f"[cyan]{key}:[/cyan] {value}")
+            console.print()
 
-    for result in results[:top_k]:
-        try:
-            # Debug print the raw result
-            print("\nRaw result data:", json.dumps(result, indent=2))
+        # Perform search
+        results = searcher.search(query=query, filters=None)
 
-            # Get values with defaults
-            score = f"{result['score']:.3f}"
-            api_name = result["api_name"]
-            api_version = result["api_version"]
-            method = result["method"]
-            path = result["path"]
-            description = result.get("description") or result.get(
-                "summary", "No description"
-            )
+        # Display results
+        table = Table(title="Search Results")
+        table.add_column("Score", justify="right", style="cyan", no_wrap=True)
+        table.add_column("API", style="green")
+        table.add_column("Version", style="yellow")
+        table.add_column("Method", style="magenta", no_wrap=True)
+        table.add_column("Path", style="blue")
+        table.add_column("Description", style="white")
 
-            # Truncate description if too long
-            if len(description) > 100:
-                description = description[:97] + "..."
+        for result in results[:top_k]:
+            try:
+                # Get values with defaults
+                score = f"{result.get('score', 0):.3f}"
+                api_name = result.get("api_name", "N/A")
+                api_version = result.get("api_version", "N/A")
+                method = result.get("method", "N/A")
+                path = result.get("path", "N/A")
+                description = result.get("description") or result.get(
+                    "summary", "No description"
+                )
 
-            table.add_row(score, api_name, api_version, method, path, description)
-        except Exception as e:
-            print(f"Error processing result: {e}")
-            print(f"Raw result data: {result}")
-            continue
+                # Truncate description if too long
+                if len(description) > 100:
+                    description = description[:97] + "..."
 
-    console.print(table)
+                table.add_row(score, api_name, api_version, method, path, description)
+            except Exception as e:
+                console.print(f"[red]Error processing result: {e}[/red]")
+                console.print(f"[dim]Raw result data: {result}[/dim]")
+                continue
 
-    # Print metrics
-    console.print("\n[bold]Search Metrics:[/bold]")
-    console.print(f"MRR: {evaluation.mrr:.3f}")
-    console.print(f"NDCG: {evaluation.ndcg:.3f}")
-    console.print(f"Precision@1: {evaluation.precision_at_1:.3f}")
-    console.print(f"Precision@5: {evaluation.precision_at_5:.3f}")
-    console.print(f"Recall: {evaluation.recall:.3f}")
-    console.print(f"Latency: {evaluation.latency_ms:.2f}ms")
+        console.print(table)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise
 
 
 @cli.command()
