@@ -1,0 +1,13 @@
+Plexure API Search
+Copyright 2023 Plexure API Search
+
+This product includes software developed by:
+- The Plexure API Search Team (https://github.com/felipepimentel/plexure-api-search)
+
+This software contains components from the following projects:
+- Sentence Transformers (https://github.com/UKPLab/sentence-transformers) - Apache 2.0
+- Pinecone Python Client (https://github.com/pinecone-io/pinecone-python-client) - Apache 2.0
+- Rich (https://github.com/Textualize/rich) - MIT License
+- Poetry (https://github.com/python-poetry/poetry) - MIT License
+
+For detailed licensing information, please see the LICENSE file. 
