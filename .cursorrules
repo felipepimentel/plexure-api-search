@@ -1,0 +1,108 @@
+# Plexure API Search - Cursor Rules
+
+# File Specific Rules
+
+## Core Files
+- searcher.py: Search engine core logic, query processing, and result ranking
+- indexer.py: API contract indexing, vector creation, and database management
+- embeddings.py: Vector embedding generation and model management
+- cli.py: Command-line interface and user interaction handling
+- config.py: Configuration management and environment variables
+- cache.py: Caching mechanisms for search results and embeddings
+- metrics.py: Performance tracking and statistical measurements
+- validation.py: Input validation and data sanitization
+- boosting.py: Search result ranking and score boosting logic
+- expansion.py: Query expansion and enhancement
+- consistency.py: Data consistency and validation checks
+- quality.py: Search quality metrics and improvements
+- understanding.py: Natural language processing and query understanding
+- monitoring.py: System monitoring and logging
+
+## Support Files
+- __init__.py: Package initialization and version info
+- __main__.py: Entry point for command-line execution
+
+## Configuration Files (in project root)
+- pyproject.toml: Project metadata and dependencies
+- poetry.lock: Locked dependency versions
+- .env: Environment variables (not in git)
+- .env.sample: Example environment variables
+- .gitignore: Git ignore patterns
+- README.md: Project documentation
+- LICENSE: Project license
+- NOTICE: Third-party notices
+
+## Documentation Files (in docs/ directory)
+- api.md: API documentation
+- architecture.md: System architecture
+- deployment.md: Deployment guide
+- development.md: Development guide
+- testing.md: Testing guide
+
+# Code Style
+- Follow PEP 8 style guidelines for Python code
+- Use type hints for all function parameters and return values
+- Maximum line length: 100 characters
+- Use docstrings for all public functions and classes
+
+# Project Structure
+- Keep all core logic in plexure_api_search/ directory
+- Place all tests in tests/ directory
+- Store configuration files in project root
+- Keep documentation in docs/ directory
+
+# Testing
+- Write unit tests for all new functionality
+- Maintain test coverage above 80%
+- Place tests in tests/ directory
+- Name test files with test_ prefix
+- Test files must match source file names
+
+# Documentation
+- Document all public APIs with docstrings
+- Keep README.md up to date with new features
+- Include usage examples in docstrings
+- Document complex algorithms with comments
+- Maintain API documentation in docs/
+
+# Dependencies
+- Use Poetry for dependency management
+- Pin dependency versions in pyproject.toml
+- Keep dependencies up to date
+- Document new dependencies in README.md
+- Use requirements-dev.txt for development dependencies
+
+# Environment
+- Use .env for environment variables
+- Never commit sensitive data
+- Keep .env.sample updated
+- Use Python 3.9 or higher
+- Document all environment variables
+
+# Performance
+- Cache expensive operations
+- Use vectorized operations where possible
+- Monitor memory usage
+- Keep response times under 200ms
+- Profile performance-critical code
+
+# Security
+- Validate all inputs
+- Sanitize API responses
+- Use environment variables for secrets
+- Follow security best practices
+- Never log sensitive data
+
+# Monitoring
+- Log important operations
+- Track performance metrics
+- Monitor error rates
+- Use structured logging
+- Implement health checks
+
+# Version Control
+- Write clear commit messages
+- Follow semantic versioning
+- Keep feature branches small
+- Merge only after tests pass
+- Use conventional commits format

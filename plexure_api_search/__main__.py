@@ -1,6 +1,6 @@
-"""Main module for the Plexure API Search tool."""
+"""Main entry point for the CLI."""
 
-from plexure_api_search.cli import main
+from .cli import cli
 
 if __name__ == "__main__":
-    main()
+    cli()

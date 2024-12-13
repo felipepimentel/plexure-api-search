@@ -1,350 +1,266 @@
-"""Search engine module for API contracts."""
+"""Advanced API search with triple vector embeddings and contextual boosting."""
 
-import glob
-import os
-import re
-from typing import Any, Dict, List, Optional, Union
-
-import numpy as np
-import yaml
+import time
+import json
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime
 from pinecone import Pinecone, ServerlessSpec
-from rich.console import Console
-from rich.table import Table
-from sentence_transformers import SentenceTransformer
-
-from plexure_api_search.cache import SearchCache
-from plexure_api_search.config import Config, ConfigManager
-from plexure_api_search.metrics import MetricsCalculator
-from plexure_api_search.monitoring import Logger
-from plexure_api_search.validation import DataValidator
+from .embeddings import TripleVectorizer
+from .boosting import ContextualBooster
+from .understanding import ZeroShotUnderstanding
+from .expansion import QueryExpander
+from .quality import QualityMetrics, SearchResult, SearchEvaluation
 
 
-def unflatten_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
-    """Unflatten metadata from Pinecone format.
-
-    Args:
-        metadata: Flattened metadata dictionary.
-
-    Returns:
-        Unflattened metadata dictionary.
-    """
-    unflattened = {}
-
-    for key, value in metadata.items():
-        if "_" in key:
-            parent_key, child_key = key.split("_", 1)
-            if parent_key not in unflattened:
-                unflattened[parent_key] = {}
-            unflattened[parent_key][child_key] = value
-        else:
-            unflattened[key] = value
-
-    return unflattened
-
-
-class SearchEngine:
-    """Search engine for API contracts."""
-
-    def __init__(self, config: Optional[Config] = None):
-        """Initialize the search engine.
-
+class APISearcher:
+    """Advanced API search engine with multiple strategies."""
+    
+    def __init__(
+        self,
+        index_name: str,
+        api_key: str,
+        environment: str,
+        cloud: str = "aws",
+        region: str = "us-east-1"
+    ):
+        """Initialize searcher with advanced features.
+        
         Args:
-            config: Optional configuration object.
+            index_name: Name of the Pinecone index.
+            api_key: Pinecone API key.
+            environment: Pinecone environment.
+            cloud: Cloud provider (aws, gcp, azure).
+            region: Cloud region.
         """
-        self.config = config or ConfigManager().load_config()
-        self.logger = Logger()
-        self.cache = SearchCache()
-        self.metrics = MetricsCalculator()
-        self.validator = DataValidator()
-        self.console = Console()
-
-        # Initialize the embedding model
-        self.model = SentenceTransformer(self.config.model_name)
-
+        if not api_key:
+            raise ValueError("Pinecone API key is required")
+        if not index_name:
+            raise ValueError("Pinecone index name is required")
+        if not environment:
+            raise ValueError("Pinecone environment is required")
+            
         # Initialize Pinecone
-        self.pc = Pinecone(api_key=self.config.pinecone_api_key)
-
-        # Ensure index exists
-        if self.config.pinecone_index not in self.pc.list_indexes().names():
-            # Create index with serverless spec
-            self.pc.create_index(
-                name=self.config.pinecone_index,
-                dimension=self.config.embedding_dimension,
-                metric="cosine",
-                spec=ServerlessSpec(
-                    cloud=self.config.pinecone_cloud, region=self.config.pinecone_region
-                ),
-            )
-
-        self.index = self.pc.Index(self.config.pinecone_index)
-
-        # Load API data
-        self.api_data = self._load_api_data()
-
-    def search(self, query: str, top_k: int = 5) -> List[Dict[str, Union[str, float]]]:
-        """Search for API endpoints matching the query.
-
+        try:
+            # Initialize Pinecone with the API key
+            pc = Pinecone(api_key=api_key)
+            
+            # Get index instance
+            self.index = pc.Index(index_name)
+            
+            # Verify connection
+            try:
+                stats = self.index.describe_index_stats()
+                print(f"\nIndex stats:")
+                print(f"Total vectors: {stats.get('total_vector_count', 0)}")
+                print(f"Dimension: {stats.get('dimension', 384)}")
+            except Exception as e:
+                print(f"Warning: Could not get index stats: {e}")
+                
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize Pinecone: {str(e)}")
+            
+        # Initialize advanced components
+        self.vectorizer = TripleVectorizer()
+        self.booster = ContextualBooster()
+        self.understanding = ZeroShotUnderstanding()
+        self.expander = QueryExpander()
+        self.metrics = QualityMetrics()
+        
+        # Search configuration
+        self.top_k = 10
+        self.min_score = 0.5
+        
+    def search(
+        self,
+        query: str,
+        filters: Optional[Dict] = None,
+        include_metadata: bool = True
+    ) -> Tuple[List[Dict], SearchEvaluation]:
+        """Perform advanced API search.
+        
         Args:
-            query: The search query.
-            top_k: Number of top results to return.
-
+            query: Search query string.
+            filters: Optional filters for search.
+            include_metadata: Whether to include metadata in results.
+            
         Returns:
-            List of search results with metadata.
+            Tuple of (search results, evaluation metrics).
+        """
+        start_time = time.time()
+        
+        try:
+            # Expand query
+            expanded = self.expander.expand_query(query)
+            
+            # Generate triple vectors for query
+            query_vectors = self.vectorizer.vectorize({
+                'path': '',
+                'method': '',
+                'description': query,
+                'summary': expanded.original_query
+            })
+            
+            # Get contextual weights
+            weights = self.booster.adjust_weights(query)
+            
+            # Combine vectors with weights and convert to list
+            combined_vector = query_vectors.to_combined_vector(weights.to_dict())
+            if hasattr(combined_vector, 'tolist'):
+                combined_vector = combined_vector.tolist()
+            
+            # Debug print query vector
+            print("\nSearch query vector:")
+            print(f"Length: {len(combined_vector)}")
+            print(f"Sample: {combined_vector[:5]}...")
+            
+            # Perform search
+            search_results = self.index.query(
+                vector=combined_vector,
+                top_k=self.top_k,
+                include_metadata=include_metadata,
+                filter=filters
+            )
+            
+            print(f"\nFound {len(search_results.matches)} matches")
+            
+            # Process results
+            results = []
+            search_eval_results = []
+            
+            for i, match in enumerate(search_results.matches, 1):
+                try:
+                    # Extract metadata
+                    metadata = match.metadata if include_metadata else {}
+                    
+                    # Debug print raw metadata
+                    print(f"\nRaw metadata for result {i}:")
+                    print(json.dumps(metadata, indent=2))
+                    
+                    # Create result object with rich metadata
+                    result = {
+                        'endpoint_id': match.id,
+                        'score': match.score,
+                        'api_name': metadata.get('api_name', 'N/A'),
+                        'api_version': metadata.get('api_version', 'N/A'),
+                        'path': metadata.get('path', 'N/A'),
+                        'method': metadata.get('method', 'N/A'),
+                        'description': metadata.get('description', 'N/A'),
+                        'summary': metadata.get('summary', ''),
+                        'parameters': metadata.get('parameters', []),
+                        'responses': metadata.get('responses', {}),
+                        'tags': metadata.get('tags', []),
+                        'operationId': metadata.get('operationId', ''),
+                        'deprecated': metadata.get('deprecated', 'false') == 'true',
+                        'security': metadata.get('security', []),
+                        'requires_auth': metadata.get('requires_auth', 'false') == 'true',
+                        'full_path': metadata.get('full_path', 'N/A')
+                    }
+                    
+                    # Debug print processed result
+                    print(f"\nProcessed result {i}:")
+                    print(json.dumps(result, indent=2))
+                    
+                    results.append(result)
+                    
+                    # Create evaluation result
+                    search_eval_results.append(SearchResult(
+                        endpoint_id=match.id,
+                        score=match.score,
+                        rank=i,
+                        is_relevant=match.score >= self.min_score
+                    ))
+                    
+                except Exception as e:
+                    print(f"Error processing search result {i}: {e}")
+                    print(f"Raw match data: {match}")
+                    continue
+            
+            # Calculate latency
+            latency_ms = (time.time() - start_time) * 1000
+            
+            # Evaluate search quality
+            evaluation = self.metrics.evaluate_search(
+                query=query,
+                results=search_eval_results,
+                total_relevant=len([r for r in search_eval_results if r.is_relevant]),
+                latency_ms=latency_ms
+            )
+            
+            # Record search for contextual learning
+            self.booster.record_search(query)
+            
+            return results, evaluation
+            
+        except Exception as e:
+            print(f"Search error: {e}")
+            raise RuntimeError(f"Search failed: {str(e)}")
+            
+    def update_feedback(
+        self,
+        query: str,
+        endpoint_id: str,
+        is_relevant: bool,
+        score: float = 1.0
+    ) -> None:
+        """Update feedback for search results.
+        
+        Args:
+            query: Original search query.
+            endpoint_id: ID of the endpoint.
+            is_relevant: Whether the result was relevant.
+            score: Feedback score (0 to 1).
         """
         try:
-            # Check cache first
-            cached_results = self.cache.get_search_results(query)
-            if cached_results:
-                self.logger.info(f"Cache hit for query: {query}")
-                return cached_results
-
-            # Process version-specific queries
-            if self._is_version_query(query):
-                return self._handle_version_query(query)
-
-            # Get query embedding
-            query_embedding = self.model.encode(query)
-
-            # Search in vector store
-            results = self._vector_search(query_embedding, top_k)
-
-            # Enrich results with metadata
-            enriched_results = self._enrich_results(results)
-
-            # Cache results
-            self.cache.store_search_results(query, enriched_results)
-
-            # Log metrics
-            self.metrics.log_search_metrics(query, len(enriched_results))
-
-            return enriched_results
-
+            # Update contextual booster
+            self.booster.update_feedback(query, score if is_relevant else 0.0)
         except Exception as e:
-            self.logger.error(f"Search failed: {str(e)}")
-            raise
-
-    def display_results(self, results: List[Dict[str, Union[str, float]]]) -> None:
-        """Display search results in a formatted table.
-
-        Args:
-            results: List of search results to display.
-        """
-        table = Table(title="API Search Results")
-
-        table.add_column("Score", justify="right", style="cyan")
-        table.add_column("API", style="green")
-        table.add_column("Version", style="yellow")
-        table.add_column("Endpoint", style="blue")
-        table.add_column("Description", style="white")
-
-        for result in results:
-            table.add_row(
-                f"{result['score']:.3f}",
-                result.get("api_name", "N/A"),
-                result.get("version", "N/A"),
-                result.get("endpoint", "N/A"),
-                result.get("description", "N/A"),
-            )
-
-        self.console.print(table)
-
-    def _is_version_query(self, query: str) -> bool:
-        """Check if query is about API versions.
-
-        Args:
-            query: The search query.
-
-        Returns:
-            True if query is about versions, False otherwise.
-        """
-        version_patterns = [
-            r"version[s]?\s+\d+(\.\d+)*",
-            r"v\d+(\.\d+)*",
-            r"apis?\s+in\s+v\d+(\.\d+)*",
-            r"quantas?\s+apis?\s+(?:estão\s+)?(?:na\s+)?versão\s+\d+(\.\d+)*",
-        ]
-
-        return any(re.search(pattern, query.lower()) for pattern in version_patterns)
-
-    def _handle_version_query(self, query: str) -> List[Dict[str, Union[str, float]]]:
-        """Handle version-specific queries.
-
-        Args:
-            query: The version-related query.
-
-        Returns:
-            List of APIs matching the version criteria.
-        """
-        # Extract version number from query
-        version_match = re.search(r"\d+(\.\d+)*", query)
-        if not version_match:
-            return []
-
-        version = version_match.group()
-
-        # Get all APIs with matching version
-        results = self._get_apis_by_version(version)
-
-        # Format results
-        formatted_results = []
-        for api in results:
-            formatted_results.append({
-                "score": 1.0,
-                "api_name": api["name"],
-                "version": api["version"],
-                "endpoint": api["endpoint"],
-                "description": f"API version {api['version']}",
-            })
-
-        return formatted_results
-
-    def _vector_search(self, query_embedding: np.ndarray, top_k: int) -> List[Dict]:
-        """Perform vector search using embeddings.
-
-        Args:
-            query_embedding: The query embedding vector.
-            top_k: Number of results to return.
-
-        Returns:
-            List of search results.
-        """
-        # Query Pinecone
-        results = self.index.query(
-            vector=query_embedding.tolist(), top_k=top_k, include_metadata=True
-        )
-
-        # Format results
-        formatted_results = []
-        for match in results.matches:
-            # Unflatten metadata
-            metadata = unflatten_metadata(match.metadata)
-
-            formatted_results.append({"score": match.score, "metadata": metadata})
-
-        return formatted_results
-
-    def _get_apis_by_version(self, version: str) -> List[Dict]:
-        """Get all APIs with matching version.
-
-        Args:
-            version: Version to filter by.
-
-        Returns:
-            List of APIs with matching version.
-        """
-        matching_apis = []
-
-        for api in self.api_data:
-            api_version = str(api.get("version", ""))
-            if self._version_matches(api_version, version):
-                # Load the API file to get endpoint information
-                try:
-                    with open(api["file_path"], "r") as f:
-                        data = yaml.safe_load(f)
-                    
-                    # Get the first endpoint path as an example
-                    paths = data.get("paths", {})
-                    endpoint = next(iter(paths.keys())) if paths else "/"
-                    
-                    matching_apis.append({
-                        "name": api.get("name", "Unknown"),
-                        "version": api_version,
-                        "description": api.get("description", ""),
-                        "endpoint": endpoint
-                    })
-                except Exception as e:
-                    self.logger.error(f"Failed to load endpoint data from {api['file_path']}: {e}")
-                    matching_apis.append({
-                        "name": api.get("name", "Unknown"),
-                        "version": api_version,
-                        "description": api.get("description", ""),
-                        "endpoint": "/"
-                    })
-
-        return matching_apis
-
-    def _version_matches(self, api_version: str, query_version: str) -> bool:
-        """Check if API version matches query version.
-
-        Args:
-            api_version: API version string.
-            query_version: Query version string.
-
-        Returns:
-            True if versions match, False otherwise.
-        """
-        # Clean and normalize versions
-        api_parts = api_version.strip().split(".")
-        query_parts = query_version.strip().split(".")
-
-        # Pad with zeros for comparison
-        while len(api_parts) < len(query_parts):
-            api_parts.append("0")
-        while len(query_parts) < len(api_parts):
-            query_parts.append("0")
-
-        # Compare each part
-        return api_parts == query_parts
-
-    def _load_api_data(self) -> List[Dict]:
-        """Load API data from files.
-
-        Returns:
-            List of API data dictionaries.
-        """
-        api_data = []
-        api_dir = self.config.api_dir
-
-        # Find all YAML files
-        yaml_files = glob.glob(os.path.join(api_dir, "**/*.yml"), recursive=True)
-        yaml_files.extend(glob.glob(os.path.join(api_dir, "**/*.yaml"), recursive=True))
-
-        for file_path in yaml_files:
-            try:
-                with open(file_path, "r") as f:
-                    data = yaml.safe_load(f)
-
-                if isinstance(data, dict):
-                    # Extract API name from file path
-                    api_name = os.path.splitext(os.path.basename(file_path))[0]
-
-                    # Add API data
-                    api_data.append({
-                        "name": api_name,
-                        "version": data.get("version", "1.0.0"),
-                        "description": data.get("description", ""),
-                        "file_path": file_path,
-                    })
-
-            except Exception as e:
-                self.logger.error(f"Failed to load API data from {file_path}: {e}")
-
-        return api_data
-
-    def _enrich_results(
-        self, results: List[Dict]
-    ) -> List[Dict[str, Union[str, float]]]:
-        """Enrich search results with additional metadata.
-
-        Args:
-            results: Raw search results.
-
-        Returns:
-            Enriched results with metadata.
-        """
-        enriched = []
-        for result in results:
-            # Get metadata directly from the match
-            metadata = result.get("metadata", {})
+            raise RuntimeError(f"Failed to update feedback: {str(e)}")
             
-            # Handle nested API info
-            api_info = metadata.get("api", {})
+    def get_quality_metrics(self) -> Dict[str, float]:
+        """Get current quality metrics.
+        
+        Returns:
+            Dictionary of quality metrics.
+        """
+        try:
+            return self.metrics.get_average_metrics()
+        except Exception as e:
+            raise RuntimeError(f"Failed to get quality metrics: {str(e)}")
             
-            enriched.append({
-                "score": result.get("score", 0.0),
-                "api_name": api_info.get("name", "N/A"),
-                "version": api_info.get("version", "N/A"),
-                "endpoint": metadata.get("endpoint", "N/A"),
-                "description": metadata.get("description", "") or metadata.get("summary", "No description provided."),
-            })
-        return enriched
+    def get_metric_trends(self) -> Dict[str, List[float]]:
+        """Get metric trends over time.
+        
+        Returns:
+            Dictionary of metric trends.
+        """
+        try:
+            return self.metrics.get_metric_trends()
+        except Exception as e:
+            raise RuntimeError(f"Failed to get metric trends: {str(e)}")
+        
+    def analyze_query(self, query: str) -> Dict[str, Any]:
+        """Analyze a search query.
+        
+        Args:
+            query: Search query string.
+            
+        Returns:
+            Dictionary with query analysis.
+        """
+        try:
+            # Expand query
+            expanded = self.expander.expand_query(query)
+            
+            # Get contextual weights
+            weights = self.booster.adjust_weights(query)
+            
+            return {
+                'original_query': query,
+                'semantic_variants': expanded.semantic_variants,
+                'technical_mappings': expanded.technical_mappings,
+                'use_cases': expanded.use_cases,
+                'weights': expanded.weights,
+                'contextual_weights': weights.to_dict()
+            }
+        except Exception as e:
+            raise RuntimeError(f"Query analysis failed: {str(e)}")
