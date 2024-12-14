@@ -8,6 +8,8 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from .config import CACHE_DIR
+
 
 @dataclass
 class SearchContext:
@@ -40,7 +42,7 @@ class WeightProfile:
 class ContextualBooster:
     """Handles dynamic weight adjustment based on context."""
 
-    def __init__(self, history_file: str = ".cache/search_history.json"):
+    def __init__(self, history_file: str = f"{CACHE_DIR}/search_history.json"):
         """Initialize booster.
 
         Args:

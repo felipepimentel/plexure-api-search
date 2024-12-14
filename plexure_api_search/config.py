@@ -30,15 +30,15 @@ MODEL_NAME = os.getenv("MODEL_NAME", "all-MiniLM-L6-v2")
 EMBEDDING_DIMENSION = 384  # Matches the model's output dimension
 
 # Cache configuration
-CACHE_DIR = Path(".cache")
+CACHE_DIR = Path("data/.cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Metrics configuration
-METRICS_DIR = Path(".metrics")
+METRICS_DIR = Path("data/.metrics")
 METRICS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Health check configuration
-HEALTH_DIR = Path(".health")
+HEALTH_DIR = Path("data/.health")
 HEALTH_DIR.mkdir(parents=True, exist_ok=True)
 
 # Validate required configuration
@@ -46,13 +46,6 @@ if not PINECONE_API_KEY:
     raise ValueError("PINECONE_API_KEY is required")
 if not PINECONE_INDEX:
     raise ValueError("PINECONE_INDEX_NAME is required")
-
-# Print configuration (for debugging)
-print("\nPinecone Configuration:")
-print(f"Index: {PINECONE_INDEX}")
-print(f"Region: {PINECONE_REGION}")
-print(f"Environment: {PINECONE_ENVIRONMENT}")
-print(f"Cloud: {PINECONE_CLOUD}")
 
 __all__ = [
     "API_DIR",

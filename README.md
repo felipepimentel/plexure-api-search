@@ -1,67 +1,31 @@
-# 🔍 Plexure API Search
+# Plexure API Search
 
-A powerful semantic search engine for API contracts that combines natural language understanding with high-precision vector search. Specifically designed to help developers quickly find and understand APIs across large collections of OpenAPI/Swagger contracts.
+Advanced API search engine with semantic understanding and contextual boosting. This tool helps developers quickly find and understand API endpoints across multiple API contracts.
 
-## 🌟 Key Features
+## 🚀 Features
 
-- **Semantic Search**: Understands the meaning behind your search, not just keywords
-- **Native OpenAPI Processing**: Comprehends OpenAPI/Swagger contract structure and semantics
-- **High Performance**: Millisecond response times thanks to vector indexing
-- **Multilingual**: Support for English and Portuguese queries
-- **Zero-Config**: Works immediately with your existing OpenAPI contracts
+- Semantic search across API endpoints
+- Context-aware result ranking
+- Support for multiple API versions
+- Fast vector-based search using Pinecone
+- Rich CLI interface with detailed endpoint information
+- Caching for improved performance
+- Comprehensive metrics and monitoring
 
-## 🧠 Algorithms & Strategies
+## 📋 Architecture & Algorithms
 
-### Smart Indexing
+### Search Pipeline
+```mermaid
+graph LR
+    A[Query] --> B[Semantic Analysis]
+    B --> C[Vector Search]
+    B --> D[Metadata Filters]
+    C --> E[Hybrid Score]
+    D --> E
+    E --> F[Final Ranking]
+```
 
-1. **Contract Processing**
-   - Intelligent YAML/JSON parsing with structural validation
-   - Rich metadata extraction (endpoints, methods, parameters)
-   - Version and path normalization for consistency
-
-2. **Semantic Vectorization**
-   ```mermaid
-   graph TD
-       A[API Contract] --> B[OpenAPI Parser]
-       B --> C[Feature Extractor]
-       C --> D[Normalizer]
-       D --> E[Embedding Model]
-       E --> F[PCA Reduction]
-       F --> G[Vector DB]
-   ```
-
-3. **Embedding Optimization**
-   - Base model: Sentence-BERT (all-MiniLM-L6-v2)
-   - PCA dimensional reduction for efficiency
-   - Statistical normalization for better vector distribution
-
-### Search Strategy
-
-1. **Search Pipeline**
-   ```mermaid
-   graph LR
-       A[Query] --> B[Semantic Analysis]
-       B --> C[Vector Search]
-       B --> D[Metadata Filters]
-       C --> E[Hybrid Score]
-       D --> E
-       E --> F[Final Ranking]
-   ```
-
-2. **Hybrid Scoring**
-   - Vector cosine similarity (70% weight)
-   - Metadata relevance (20% weight)
-   - Version matching (10% weight)
-
-3. **Optimizations**
-   - Intelligent cache with adaptive TTL
-   - Batch processing for indexing
-   - Optimized vector compression
-
-### Advanced Search Strategy
-
-#### Multi-Vector Representation
-
+### Multi-Vector Representation
 ```mermaid
 graph TD
     A[API Contract] --> B1[Semantic Vector]
@@ -73,17 +37,7 @@ graph TD
     C --> D[Hybrid Search]
 ```
 
-1. **Triple Vector Embedding**
-   - Semantic Vector: Captures meaning and intent
-   - Structure Vector: Represents API structure and relationships
-   - Parameter Vector: Encodes parameter types and constraints
-
-2. **Contextual Boosting**
-   - Dynamic weight adjustment based on query type
-   - Historical usage patterns influence ranking
-   - Real-time relevance feedback
-
-3. **Advanced Scoring Algorithm**
+### Advanced Scoring Algorithm
 ```python
 final_score = (
     0.4 * semantic_similarity +
@@ -93,55 +47,20 @@ final_score = (
 )
 ```
 
-#### Innovative Features
+### Caching Strategy
+```mermaid
+graph TD
+    A[Query] --> B{Cache Check}
+    B -->|Hit| C[Result Return]
+    B -->|Miss| D[Vector Search]
+    D --> E[Cache Update]
+    E --> C
+    F[Usage Analytics] --> G[Cache Eviction]
+```
 
-1. **Zero-Shot API Understanding**
-   - Automatic API categorization
-   - Dynamic relationship mapping
-   - Cross-API dependency detection
+## 📊 Performance & Metrics
 
-2. **Smart Query Expansion**
-   ```mermaid
-   graph LR
-       A[Query] --> B[Core Intent]
-       B --> C1[Semantic Variants]
-       B --> C2[Technical Mappings]
-       B --> C3[Common Use Cases]
-       C1 --> D[Expanded Search]
-       C2 --> D
-       C3 --> D
-   ```
-
-3. **Adaptive Learning**
-   - Query success rate tracking
-   - Search pattern analysis
-   - Automatic weight optimization
-
-#### Performance Optimizations
-
-1. **Vector Quantization**
-   - Product Quantization (PQ) for efficient storage
-   - Optimized for Pinecone's architecture
-   - Minimal precision loss
-
-2. **Caching Strategy**
-   ```mermaid
-   graph TD
-       A[Query] --> B{Cache Check}
-       B -->|Hit| C[Result Return]
-       B -->|Miss| D[Vector Search]
-       D --> E[Cache Update]
-       E --> C
-       F[Usage Analytics] --> G[Cache Eviction]
-   ```
-
-3. **Parallel Processing**
-   - Concurrent vector computations
-   - Distributed search capabilities
-   - Load-balanced query handling
-
-#### Search Quality Metrics
-
+### Search Quality
 | Metric | Current | Target |
 |--------|---------|--------|
 | MRR@10 | 0.82 | 0.90 |
@@ -149,118 +68,7 @@ final_score = (
 | P@1 | 0.78 | 0.85 |
 | Latency | 200ms | 100ms |
 
-#### Innovative Use Cases
-
-1. **API Chain Discovery**
-   ```bash
-   # Find sequence of APIs for complex operations
-   search "APIs needed for user registration to first purchase"
-   ```
-
-2. **Cross-Version Migration**
-   ```bash
-   # Identify breaking changes and alternatives
-   search "migration path from v1 to v2 payment API"
-   ```
-
-3. **Security Pattern Analysis**
-   ```bash
-   # Find security-critical endpoints
-   search "endpoints requiring authentication handling sensitive data"
-   ```
-
-#### Future Enhancements
-
-1. **Semantic Graph Integration**
-   - API dependency visualization
-   - Usage pattern discovery
-   - Automated documentation linking
-
-2. **LLM-Enhanced Search**
-   - Query intent disambiguation
-   - Natural language explanation
-   - Code example generation
-
-3. **Real-time Analytics**
-   - Usage pattern detection
-   - Anomaly identification
-   - Search quality monitoring
-
-4. **API Composition**
-   - Automatic workflow generation
-   - Service mesh integration
-   - Cross-API orchestration
-
-## 💡 Use Cases
-
-### 1. API Discovery
-```bash
-# Find authentication endpoints
-poetry run python -m plexure_api_search search "authentication endpoints"
-
-# Search version-specific APIs
-poetry run python -m plexure_api_search search "APIs in version 2"
-```
-
-### 2. Contextual Documentation
-```bash
-# Find usage examples
-poetry run python -m plexure_api_search search "user creation examples"
-
-# Search specific parameters
-poetry run python -m plexure_api_search search "endpoints using pagination"
-```
-
-### 3. Compatibility Analysis
-```bash
-# Check version changes
-poetry run python -m plexure_api_search search "changes in user API between v1 and v2"
-```
-
-## 🔧 Detailed Architecture
-
-### Core Components
-
-```mermaid
-graph TD
-    A[API Contracts] -->|YAML/JSON| B[Parser]
-    B --> C[Enricher]
-    C --> D[Vectorizer]
-    D --> E[Pinecone DB]
-    
-    F[User Query] --> G[Query Analyzer]
-    G --> H[Vector Search]
-    E --> H
-    H --> I[Result Ranker]
-    I --> J[Response Formatter]
-```
-
-### Processing Pipeline
-
-1. **Data Ingestion**
-   - OpenAPI structural validation
-   - Endpoint and metadata extraction
-   - Path and parameter normalization
-
-2. **Enrichment**
-   - Dependency analysis
-   - Automatic categorization
-   - Feature detection
-
-3. **Indexing**
-   - Embedding generation
-   - Dimensional compression
-   - Vector indexing
-
-4. **Search**
-   - Intent analysis
-   - Vector search
-   - Hybrid ranking
-
-## 📊 Benchmarks
-
 ### Performance
-
 | Operation | Average Time | P95 |
 |-----------|--------------|-----|
 | Indexing (per endpoint) | 50ms | 100ms |
@@ -268,22 +76,64 @@ graph TD
 | Complex search | 500ms | 800ms |
 
 ### Accuracy
-
 | Metric | Value |
 |--------|-------|
 | Precision | 92% |
 | Recall | 88% |
 | F1-Score | 90% |
 
-## 🛠️ Technology Stack
+## 📋 Requirements
 
-- **Sentence Transformers**: Base model for semantic embeddings
-- **Pinecone**: Vector database for efficient search
-- **OpenAPI Parser**: Native OpenAPI contract processing
-- **Rich**: Modern and friendly CLI interface
-- **Poetry**: Dependency management and packaging
+- Python 3.12+
+- Pinecone API Key
+- OpenRouter API Key (optional, for enhanced query understanding)
 
-## 🔄 Data Flow
+## 🛠️ Installation
+
+```bash
+# Using Poetry (recommended)
+poetry install
+
+# Using pip
+pip install -r requirements.txt
+```
+
+## ⚙️ Configuration
+
+1. Copy the sample environment file:
+```bash
+cp .env.sample .env
+```
+
+2. Edit `.env` with your configuration:
+```env
+PINECONE_API_KEY=your_key_here
+PINECONE_INDEX_NAME=your_index_name
+PINECONE_REGION=us-east-1
+PINECONE_CLOUD=aws
+OPENROUTER_API_KEY=optional_key_here
+```
+
+## 🎯 Usage
+
+### Index API Contracts
+```bash
+poetry run python -m plexure_api_search index
+```
+
+### Search APIs
+```bash
+# Search for authentication endpoints
+poetry run python -m plexure_api_search search "find authentication endpoints"
+
+# Search version-specific APIs
+poetry run python -m plexure_api_search search "APIs in version 2"
+
+# Find usage examples
+poetry run python -m plexure_api_search search "user creation examples"
+```
+
+## 📁 Data Flow
 
 ```mermaid
 sequenceDiagram
@@ -301,23 +151,6 @@ sequenceDiagram
     CLI-->>User: Show Table
 ```
 
-## 🎯 Roadmap
-
-1. **Short Term**
-   - GraphQL Support
-   - Web Interface
-   - Postman/Insomnia Export
-
-2. **Medium Term**
-   - Breaking Changes Analysis
-   - Test Generation
-   - Automatic Documentation
-
-3. **Long Term**
-   - CI/CD Integration
-   - API Marketplace
-   - Advanced Analytics
-
 ## 📈 Comparison
 
 | Feature | Plexure API Search | Traditional Solution |
@@ -328,64 +161,180 @@ sequenceDiagram
 | Required Setup | Zero-config | Manual configuration |
 | Contextual Understanding | ✅ | ❌ |
 | Smart Cache | ✅ | ❌ |
+| Vector Search | ✅ | ❌ |
+| Real-time Updates | ✅ | ❌ |
+| API Version Control | ✅ | ❌ |
+| Custom Ranking | ✅ | ❌ |
 
-## 🚀 Quick Start
+## 🎯 Roadmap
 
-1. **Install Dependencies**
+### Phase 1: Search Engine Core (Q1 2024)
+- [ ] Advanced Vector Search Strategies
+  - Improved semantic matching
+  - Context-aware ranking
+  - Query expansion techniques
+- [ ] Enhanced Query Understanding
+  - Natural language processing improvements
+  - Technical term recognition
+  - API-specific terminology handling
+- [ ] Search Quality Optimization
+  - Fine-tuned relevance scoring
+  - Result ranking improvements
+  - Search accuracy metrics
+
+### Phase 2: Data Processing & Indexing (Q2 2024)
+- [ ] Advanced API Contract Processing
+  - Better OpenAPI/Swagger parsing
+  - Schema relationship detection
+  - API versioning intelligence
+- [ ] Vector Embedding Enhancements
+  - Multi-model embedding support
+  - Domain-specific embeddings
+  - Embedding compression techniques
+- [ ] Index Optimization
+  - Efficient vector storage
+  - Fast retrieval mechanisms
+  - Index maintenance tools
+
+### Phase 3: Performance & Scale (Q3-Q4 2024)
+- [ ] Search Performance
+  - Query latency optimization
+  - Batch processing improvements
+  - Resource usage optimization
+- [ ] Caching & Storage
+  - Smart caching strategies
+  - Efficient data structures
+  - Memory optimization
+- [ ] Scalability
+  - Large-scale API handling
+  - Distributed search capabilities
+  - High-throughput processing
+
+## 🛠️ Technology Stack
+
+### Core Technologies
+- **Sentence Transformers**: Base model for semantic embeddings
+- **Pinecone**: Vector database for efficient search
+- **OpenAPI Parser**: Native OpenAPI contract processing
+- **Rich**: Modern and friendly CLI interface
+- **Poetry**: Dependency management and packaging
+
+### Performance Optimizations
+- Vector Quantization (PQ)
+- Adaptive Caching
+- Parallel Processing
+- Load Balancing
+
+### Monitoring & Analytics
+- Performance Metrics
+- Search Quality Tracking
+- Usage Analytics
+- Error Monitoring
+
+## 📁 Project Structure
+
+### Core Files
+- `searcher.py`: Search engine core logic, query processing, and result ranking
+- `indexer.py`: API contract indexing, vector creation, and database management
+- `embeddings.py`: Vector embedding generation and model management
+- `cli.py`: Command-line interface and user interaction handling
+- `config.py`: Configuration management and environment variables
+- `cache.py`: Caching mechanisms for search results and embeddings
+- `metrics.py`: Performance tracking and statistical measurements
+- `validation.py`: Input validation and data sanitization
+- `boosting.py`: Search result ranking and score boosting logic
+- `expansion.py`: Query expansion and enhancement
+- `consistency.py`: Data consistency and validation checks
+- `quality.py`: Search quality metrics and improvements
+- `understanding.py`: Natural language processing and query understanding
+- `monitoring.py`: System monitoring and logging
+- `pinecone_client.py`: Centralized client for Pinecone vector operations
+
+### Support Files
+- `__init__.py`: Package initialization and version info
+- `__main__.py`: Entry point for command-line execution
+
+### Configuration Files
+- `pyproject.toml`: Project metadata and dependencies
+- `poetry.lock`: Locked dependency versions
+- `.env`: Environment variables (not in git)
+- `.env.sample`: Example environment variables
+- `.gitignore`: Git ignore patterns
+- `README.md`: Project documentation
+- `LICENSE`: Project license
+- `NOTICE`: Third-party notices
+
+## 📊 Development
+
+### Setup Development Environment
 ```bash
-# Using Poetry (recommended)
-poetry install
+# Install development dependencies
+poetry install --with dev
 
-# Using pip
-pip install -r requirements.txt
+# Run tests
+poetry run pytest
+
+# Run linting
+poetry run black .
+poetry run isort .
 ```
 
-2. **Configure Environment**
-```bash
-# Copy sample env file
-cp .env.sample .env
+### Code Style
+- Follow PEP 8 guidelines
+- Use type hints
+- Maximum line length: 100 characters
+- Write docstrings for all public functions and classes
 
-# Edit .env with your API keys
-PINECONE_API_KEY=your_key_here
-PINECONE_ENVIRONMENT=your_env_here
+## 🧪 Testing
+
+```bash
+# Run all tests
+poetry run pytest
+
+# Run with coverage
+poetry run pytest --cov=plexure_api_search
+
+# Run specific test file
+poetry run pytest tests/test_searcher.py
 ```
 
-3. **Index API Contracts**
-```bash
-poetry run python -m plexure_api_search index
-```
+## 📈 Monitoring
 
-4. **Search APIs**
-```bash
-poetry run python -m plexure_api_search search "find authentication endpoints"
-```
+The system includes comprehensive monitoring:
+- Performance metrics
+- Search quality metrics
+- Error tracking
+- Usage statistics
 
-## 🔧 Configuration
-
-The system can be configured through environment variables or a `.env` file:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PINECONE_API_KEY` | Pinecone API key | Required |
-| `PINECONE_ENVIRONMENT` | Pinecone environment | Required |
-| `PINECONE_INDEX` | Index name | `api-search` |
-| `API_DIR` | Directory containing API contracts | `./apis` |
-| `CACHE_DIR` | Cache directory | `./.cache` |
-| `METRICS_DIR` | Metrics directory | `./.metrics` |
+### Key Metrics Tracked
+- Query latency
+- Cache hit rate
+- Vector search accuracy
+- API version coverage
+- User satisfaction score
+- System resource usage
 
 ## 🤝 Contributing
 
-Contributions are welcome! See our contribution guide for more details.
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## 📫 Support
-
-For support, please open an issue on GitHub or contact our team.
+### Development Guidelines
+- Write comprehensive tests
+- Follow semantic versioning
+- Keep feature branches small
+- Document all changes
+- Update relevant documentation
 
 ## 📝 License
 
-This project is licensed under the Apache License, Version 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License, Version 2.0.
 
-Copyright 2023 Plexure API Search
+```
+Copyright 2024 Plexure API Search
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -398,6 +347,33 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+```
 
 For more information about the Apache License 2.0, please visit:
 https://www.apache.org/licenses/LICENSE-2.0
+
+The following third-party components are used in this project:
+- Sentence Transformers (Apache 2.0)
+- Pinecone Python Client (Apache 2.0)
+- Rich (MIT License)
+- Poetry (MIT License)
+
+See [NOTICE](NOTICE) file for detailed third-party notices.
+
+## 🙏 Acknowledgments
+
+- Sentence Transformers for embedding generation
+- Pinecone for vector search capabilities
+- Rich for beautiful CLI interface
+- Poetry for dependency management
+
+## 📫 Support
+
+For support, please:
+1. Check the documentation
+2. Search existing issues
+3. Open a new issue with:
+   - Clear description
+   - Steps to reproduce
+   - Expected vs actual behavior
+   - System information

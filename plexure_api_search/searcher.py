@@ -168,10 +168,10 @@ class APISearcher:
             matches = results.get("matches", [])
 
             for match in matches:
-                print(match)
                 try:
                     # Get score and metadata
-                    score = match.get("score", 0)
+                    # Normalize score to be positive (0 to 1)
+                    score = (1 + match.get("score", 0)) / 2
                     metadata = match.get("metadata", {})
 
                     # Create result entry
@@ -186,11 +186,9 @@ class APISearcher:
                         "parameters": metadata.get("parameters", []),
                         "responses": metadata.get("responses", []),
                         "tags": metadata.get("tags", []),
-                        "requires_auth": metadata.get("requires_auth", "false")
-                        == "true",
+                        "requires_auth": metadata.get("requires_auth", "false") == "true",
                         "deprecated": metadata.get("deprecated", "false") == "true",
                     }
-                    print(result)
 
                     processed_results.append(result)
 

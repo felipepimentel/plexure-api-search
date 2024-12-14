@@ -1,17 +1,14 @@
 """API contract indexer with triple vector embeddings."""
 
-import glob
-import json
 import logging
-import os
 from typing import Dict, List
 
-import yaml
-
+from .api_spec import APISpec
 from .config import API_DIR
 from .embeddings import TripleVectorizer
+from .metadata import Metadata
 from .pinecone_client import PineconeClient
-from .utils import FileUtils, APISpecUtils, MetadataUtils
+from .utils import FileUtils
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -70,29 +67,29 @@ class APIIndexer:
     def _get_all_endpoints(self) -> List[Dict]:
         """Get all endpoints from API files."""
         endpoints = []
-        
+
         # Find API files
         api_files = FileUtils.find_api_files(self.api_dir)
-        
+
         # Process each file
         for file_path in api_files:
             spec = FileUtils.load_api_file(file_path)
             if spec:
-                endpoints.extend(APISpecUtils.extract_endpoints(spec))
-                
+                endpoints.extend(APISpec.extract_endpoints(spec))
+
         return endpoints
-        
+
     def _create_vector_entry(self, endpoint: Dict) -> Dict:
         """Create vector entry for an endpoint."""
         vector = self.vectorizer.vectorize(endpoint)
         combined_vector = vector.to_combined_vector()
-        
+
         # Create unique ID
-        vector_id = MetadataUtils.create_endpoint_id(endpoint)
-        
+        vector_id = Metadata.create_endpoint_id(endpoint)
+
         # Prepare metadata
-        metadata = MetadataUtils.sanitize_metadata(endpoint)
-        
+        metadata = Metadata.sanitize_metadata(endpoint)
+
         # Create vector entry
         return {
             "id": vector_id,

@@ -74,9 +74,9 @@ class PineconeClient:
         """Verify connection and get index stats."""
         try:
             stats = self.index.describe_index_stats()
-            logger.info("\nIndex stats:")
-            logger.info(f"Total vectors: {stats.get('total_vector_count', 0)}")
-            logger.info(f"Dimension: {stats.get('dimension', self.dimension)}")
+            logger.debug("Index stats:")
+            logger.debug(f"Total vectors: {stats.get('total_vector_count', 0)}")
+            logger.debug(f"Dimension: {stats.get('dimension', self.dimension)}")
             return stats
         except Exception as e:
             logger.error(f"Could not get index stats: {e}")
@@ -154,7 +154,6 @@ class PineconeClient:
         Returns:
             Search results from Pinecone
         """
-        print("include_metadata", include_metadata)
         try:
             results = self.index.query(
                 vector=query_vector,
