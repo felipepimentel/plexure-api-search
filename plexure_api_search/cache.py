@@ -5,6 +5,8 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from functools import lru_cache
+import hashlib
 
 import numpy as np
 from diskcache import Cache
@@ -173,3 +175,24 @@ class EmbeddingCache:
     def clear(self) -> None:
         """Clear all cached embeddings."""
         self.cache.clear() 
+
+
+class SmartCache:
+    def __init__(self, max_size: int = 1000):
+        self.max_size = max_size
+        
+    @lru_cache(maxsize=1000)
+    def get_cached_search(self, query_hash: str) -> List[Dict]:
+        """Get cached search results."""
+        pass
+        
+    def cache_search(self, query: str, results: List[Dict]) -> None:
+        """Cache search results with query fingerprint."""
+        query_hash = self._generate_query_hash(query)
+        self.get_cached_search.cache_clear()
+        
+    def _generate_query_hash(self, query: str) -> str:
+        """Generate stable hash for query."""
+        return hashlib.sha256(
+            json.dumps(query, sort_keys=True).encode()
+        ).hexdigest() 

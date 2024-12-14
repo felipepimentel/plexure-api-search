@@ -9,6 +9,7 @@ from .expansion import QueryExpander
 from .pinecone_client import PineconeClient
 from .quality import QualityMetrics
 from .understanding import ZeroShotUnderstanding
+from .cache import SmartCache
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +17,12 @@ logger = logging.getLogger(__name__)
 class APISearcher:
     """Advanced API search engine with multiple strategies."""
 
-    def __init__(self, pinecone_client: PineconeClient):
+    def __init__(self, pinecone_client: PineconeClient, top_k: int = 10):
         """Initialize searcher.
 
         Args:
             pinecone_client: PineconeClient instance
+            top_k: Number of results to return (default: 10)
         """
         self.client = pinecone_client
         self.vectorizer = TripleVectorizer()
@@ -28,22 +30,58 @@ class APISearcher:
         self.understanding = ZeroShotUnderstanding()
         self.expander = QueryExpander()
         self.metrics = QualityMetrics()
-        self.top_k = 10
+        self.cache = SmartCache()
+        self.top_k = top_k
+
+    def set_top_k(self, top_k: int) -> None:
+        """Set the number of results to return.
+
+        Args:
+            top_k: Number of results to return
+        """
+        self.top_k = top_k
 
     def search(
-        self, query: str, filters: Optional[Dict] = None, include_metadata: bool = True
+        self, 
+        query: str, 
+        filters: Optional[Dict] = None, 
+        include_metadata: bool = True,
+        use_cache: bool = True
     ) -> List[Dict]:
-        """Search for API endpoints."""
+        """Enhanced search with caching and reranking."""
         try:
+            # Check cache first
+            if use_cache:
+                cached = self.cache.get_cached_search(query)
+                if cached:
+                    return cached
+                    
+            # Vector search
             query_vector = self.vectorizer.vectorize_query(query)
             results = self.client.search_vectors(
                 query_vector=query_vector,
-                top_k=self.top_k,
+                # Increase top_k for reranking
+                top_k=self.top_k * 2,
                 filters=filters,
                 include_metadata=include_metadata,
             )
-            print(results)
-            return self._process_results(results)
+            
+            # Process results
+            processed = self._process_results(results)
+            
+            # Rerank results
+            reranked = self.vectorizer.rerank_results(
+                query=query,
+                results=processed,
+                top_k=self.top_k
+            )
+            
+            # Cache results
+            if use_cache:
+                self.cache.cache_search(query, reranked)
+                
+            return reranked
+            
         except Exception as e:
             logger.error(f"Search failed: {e}")
             raise

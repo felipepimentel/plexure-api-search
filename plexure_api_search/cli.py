@@ -85,72 +85,50 @@ def index(force: bool):
 
 @cli.command()
 @click.argument("query")
-@click.option("--top-k", default=10, help="Number of results to return")
-@click.option("--analyze", is_flag=True, help="Show query analysis")
-def search(query: str, top_k: int, analyze: bool):
-    """Search for API endpoints."""
+@click.option("--top-k", default=10, help="Number of results")
+@click.option("--rerank/--no-rerank", default=True, help="Use reranking")
+@click.option("--cache/--no-cache", default=True, help="Use cache")
+def search(query: str, top_k: int, rerank: bool, cache: bool):
+    """Enhanced search command."""
     try:
-        # Load configuration
         config = load_config()
-
-        # Initialize Pinecone client
-        pinecone_client = PineconeClient(
-            api_key=config["api_key"],
-            environment=config["environment"],
-            index_name=config["index_name"],
-            cloud=config.get("cloud", "aws"),
-            region=config.get("region", "us-east-1"),
+        pinecone_client = PineconeClient(**config)
+        searcher = APISearcher(pinecone_client)
+        
+        # Set top_k
+        searcher.set_top_k(top_k)
+        
+        # Create progress
+        with console.status("Searching...") as status:
+            results = searcher.search(
+                query=query,
+                use_cache=cache
+            )
+            
+        # Create table
+        table = Table(
+            "Score",
+            "Cross-Score",
+            "API",
+            "Method",
+            "Path",
+            "Description"
         )
-
-        # Initialize searcher
-        searcher = APISearcher(pinecone_client=pinecone_client)
-
-        if analyze:
-            analysis = searcher.analyze_query(query)
-            console.print("\n[bold]Query Analysis:[/bold]")
-            for key, value in analysis.items():
-                console.print(f"[cyan]{key}:[/cyan] {value}")
-            console.print()
-
-        # Perform search
-        results = searcher.search(query=query, filters=None)
-
-        # Display results
-        table = Table(title="Search Results")
-        table.add_column("Score", justify="right", style="cyan", no_wrap=True)
-        table.add_column("API", style="green")
-        table.add_column("Version", style="yellow")
-        table.add_column("Method", style="magenta", no_wrap=True)
-        table.add_column("Path", style="blue")
-        table.add_column("Description", style="white")
-
-        for result in results[:top_k]:
-            try:
-                # Get values with defaults
-                score = f"{result.get('score', 0):.3f}"
-                api_name = result.get("api_name", "N/A")
-                api_version = result.get("api_version", "N/A")
-                method = result.get("method", "N/A")
-                path = result.get("path", "N/A")
-                description = result.get("description") or result.get(
-                    "summary", "No description"
-                )
-
-                # Truncate description if too long
-                if len(description) > 100:
-                    description = description[:97] + "..."
-
-                table.add_row(score, api_name, api_version, method, path, description)
-            except Exception as e:
-                console.print(f"[red]Error processing result: {e}[/red]")
-                console.print(f"[dim]Raw result data: {result}[/dim]")
-                continue
-
+        
+        for result in results:
+            table.add_row(
+                f"{result['score']:.3f}",
+                f"{result.get('cross_score', 0):.3f}",
+                result["api_name"],
+                result["method"],
+                result["path"],
+                result["description"][:100] + "..."
+            )
+            
         console.print(table)
-
+        
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        raise
+        console.print(f"[red]Error: {e}[/red]")
 
 
 @cli.command()

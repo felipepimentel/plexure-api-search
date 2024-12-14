@@ -6,6 +6,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.decomposition import PCA
 import logging
+from sentence_transformers import CrossEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,9 @@ class TripleVectorizer:
         self.semantic_pca = PCA(n_components=pca_components)
         self.structure_pca = PCA(n_components=pca_components)
         self.parameter_pca = PCA(n_components=pca_components)
+        
+        # Add cross-encoder for reranking
+        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
         
     def create_semantic_vector(self, endpoint_data: Dict[str, Any]) -> np.ndarray:
         """Create semantic vector from endpoint description and documentation.
@@ -231,6 +235,23 @@ class TripleVectorizer:
             embeddings = embeddings.tolist()
             
         return embeddings
+
+    def rerank_results(self, query: str, results: List[Dict], top_k: int = 10) -> List[Dict]:
+        """Rerank results using cross-encoder."""
+        if not results:
+            return results
+            
+        # Prepare pairs for cross-encoder
+        pairs = [(query, result["description"]) for result in results]
+        
+        # Get cross-encoder scores
+        scores = self.cross_encoder.predict(pairs)
+        
+        # Sort results by new scores
+        for result, score in zip(results, scores):
+            result["cross_score"] = float(score)
+            
+        return sorted(results, key=lambda x: x["cross_score"], reverse=True)[:top_k]
 
 def create_embeddings(text):
     logger.info(f"Creating embedding for text: {text[:100]}...")

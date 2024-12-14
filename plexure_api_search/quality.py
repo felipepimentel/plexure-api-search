@@ -6,6 +6,7 @@ import numpy as np
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
+from sklearn.metrics import ndcg_score
 
 
 @dataclass
@@ -30,6 +31,15 @@ class SearchEvaluation:
     timestamp: datetime
 
 
+@dataclass
+class SearchMetrics:
+    precision: float
+    recall: float
+    f1_score: float
+    ndcg: float
+    latency: float
+    
+
 class QualityMetrics:
     """Handles search quality metrics and evaluation."""
     
@@ -42,6 +52,7 @@ class QualityMetrics:
         self.metrics_file = Path(metrics_file)
         self.metrics_file.parent.mkdir(parents=True, exist_ok=True)
         self.evaluations: List[SearchEvaluation] = []
+        self.metrics_history: List[SearchMetrics] = []
         self._load_metrics()
         
     def _load_metrics(self) -> None:
@@ -103,35 +114,17 @@ class QualityMetrics:
         
     def calculate_ndcg(
         self,
-        results: List[SearchResult],
-        k: Optional[int] = None
+        relevance_scores: List[float],
+        ideal_scores: Optional[List[float]] = None
     ) -> float:
-        """Calculate Normalized Discounted Cumulative Gain.
-        
-        Args:
-            results: List of search results.
-            k: Optional cutoff rank.
+        """Calculate Normalized Discounted Cumulative Gain."""
+        if ideal_scores is None:
+            ideal_scores = sorted(relevance_scores, reverse=True)
             
-        Returns:
-            NDCG score.
-        """
-        if k is not None:
-            results = results[:k]
-            
-        dcg = 0.0
-        idcg = 0.0
-        
-        # Calculate DCG
-        for i, result in enumerate(results, 1):
-            if result.is_relevant:
-                dcg += 1.0 / np.log2(i + 1)
-                
-        # Calculate IDCG
-        relevant_count = sum(1 for r in results if r.is_relevant)
-        for i in range(relevant_count):
-            idcg += 1.0 / np.log2(i + 2)
-            
-        return dcg / idcg if idcg > 0 else 0.0
+        return ndcg_score(
+            [relevance_scores],
+            [ideal_scores]
+        )
         
     def calculate_precision(
         self,
