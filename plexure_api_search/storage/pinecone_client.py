@@ -17,9 +17,8 @@ class PineconeClient:
     def __init__(self):
         """Initialize Pinecone client."""
 
-        self.index_name = config_instance.pinecone_index
-        self.dimension = config_instance.pinecone_dimension
-        self.metric = config_instance.pinecone_metric
+        self.index_name = config_instance.pinecone_index_name
+        self.dimension = config_instance.vector_dimension
         self.cloud = config_instance.pinecone_cloud
         self.region = config_instance.pinecone_region
 
@@ -35,7 +34,7 @@ class PineconeClient:
                 pc.create_index(
                     name=self.index_name,
                     dimension=self.dimension,
-                    metric=self.metric,
+                    metric="cosine",  # Use cosine similarity by default
                     spec=ServerlessSpec(cloud=self.cloud, region=self.region),
                 )
                 time.sleep(2)  # Wait for index creation

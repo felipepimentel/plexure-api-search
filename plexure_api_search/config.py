@@ -1,90 +1,75 @@
-"""Configuration module for the API search engine."""
+"""Configuration management."""
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
 
+# Load environment variables
+load_dotenv()
 
+
+@dataclass
 class Config:
-    """Singleton configuration class for the API search engine."""
+    """Application configuration."""
 
-    _instance: Optional["Config"] = None
+    # Vector store settings
+    vector_store: str = os.getenv("VECTOR_STORE", "pinecone")  # "pinecone" or "faiss"
+    vector_dimension: int = int(os.getenv("VECTOR_DIMENSION", "384"))
 
-    def __new__(cls) -> "Config":
-        """Ensure only one instance is created."""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
+    # FAISS settings
+    faiss_index_type: str = os.getenv("FAISS_INDEX_TYPE", "IVFFlat")
+    faiss_nlist: int = int(os.getenv("FAISS_NLIST", "100"))
 
-    def __init__(self):
-        """Initialize configuration if not already initialized."""
-        if self._initialized:
-            return
+    # Pinecone settings
+    pinecone_api_key: Optional[str] = os.getenv("PINECONE_API_KEY")
+    pinecone_index_name: str = os.getenv("PINECONE_INDEX_NAME", "api-search")
+    pinecone_region: str = os.getenv("PINECONE_REGION", "us-east-1")
+    pinecone_cloud: str = os.getenv("PINECONE_CLOUD", "aws")
 
-        # Load environment variables
-        load_dotenv()
+    # Model settings
+    bi_encoder_model: str = os.getenv("BI_ENCODER_MODEL", "all-MiniLM-L6-v2")
+    cross_encoder_model: str = os.getenv(
+        "CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    )
 
-        # API directory configuration
-        self.api_dir = os.getenv("API_DIR", "assets/apis")
+    # Cache settings
+    embedding_cache_ttl: int = int(
+        os.getenv("EMBEDDING_CACHE_TTL", "86400")
+    )  # 24 hours
 
-        # Pinecone configuration
-        self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
-        self.pinecone_index = os.getenv("PINECONE_INDEX_NAME")
-        self.pinecone_cloud = os.getenv("PINECONE_CLOUD", "aws")
-        self.pinecone_region = os.getenv("PINECONE_REGION", "us-east-1")
-        self.pinecone_dimension = int(os.getenv("PINECONE_DIMENSION", "384"))
-        self.pinecone_metric = os.getenv("PINECONE_METRIC", "dotproduct")
-        # Construct Pinecone environment
-        self.pinecone_environment = (
-            f"{self.pinecone_region}"  # Pinecone environment is just the region for AWS
-        )
+    # PCA settings
+    pca_components: int = int(os.getenv("PCA_COMPONENTS", "128"))
 
-        # OpenRouter configuration
-        self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+    # API settings
+    api_dir: str = os.getenv("API_DIR", "assets/apis")
 
-        # Model configuration
-        self.bi_encoder_model = os.getenv("BI_ENCODER_MODEL", "all-MiniLM-L6-v2")
-        self.cross_encoder_model = os.getenv(
-            "CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
-        )
-        self.vector_dimension = (
-            self.pinecone_dimension
-        )  # Use same dimension as Pinecone
-        self.pca_components = int(os.getenv("PCA_COMPONENTS", "128"))
+    # Directory configurations
+    cache_dir = Path("data/.cache")
+    cache_ttl: int = int(os.getenv("CACHE_TTL", "3600"))  # 1 hour
 
-        # Cache configuration
-        self.cache_ttl = int(os.getenv("CACHE_TTL", "3600"))  # 1 hour default
-        self.embedding_cache_ttl = int(
-            os.getenv("EMBEDDING_CACHE_TTL", "86400")
-        )  # 24 hours default
+    metrics_dir = Path("data/.metrics")
+    health_dir = Path("data/.health")
 
-        # Directory configurations
-        self.cache_dir = Path("data/.cache")
-        self.metrics_dir = Path("data/.metrics")
-        self.health_dir = Path("data/.health")
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        # Create cache directory if it doesn't exist
+        os.makedirs(self.cache_dir, exist_ok=True)
 
-        # Create directories
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.metrics_dir.mkdir(parents=True, exist_ok=True)
-        self.health_dir.mkdir(parents=True, exist_ok=True)
+        # Validate vector store
+        if self.vector_store not in ["pinecone", "faiss"]:
+            raise ValueError(
+                f"Invalid vector store: {self.vector_store}. Must be 'pinecone' or 'faiss'"
+            )
 
-        # Validate required configuration
-        if not self.pinecone_api_key:
-            raise ValueError("PINECONE_API_KEY is required")
-        if not self.pinecone_index:
-            raise ValueError("PINECONE_INDEX_NAME is required")
-
-        self._initialized = True
-
-    @classmethod
-    def get_instance(cls) -> "Config":
-        """Get the singleton instance of the configuration."""
-        return cls()
+        # Validate Pinecone settings if using Pinecone
+        if self.vector_store == "pinecone" and not self.pinecone_api_key:
+            raise ValueError("PINECONE_API_KEY is required when using Pinecone")
 
 
-config_instance = Config.get_instance()
+# Global configuration instance
+config_instance = Config()
 
-__all__ = ["config_instance"]
+__all__ = ["config_instance", "Config"]

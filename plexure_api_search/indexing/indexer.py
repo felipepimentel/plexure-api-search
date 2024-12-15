@@ -232,13 +232,14 @@ class APIIndexer:
                     # Process each method
                     for method, endpoint_data in path_data.items():
                         try:
+                            # Skip non-HTTP method keys
+                            if method.upper() not in {"GET", "POST", "PUT", "DELETE", "PATCH"}:
+                                continue
+
                             if not isinstance(endpoint_data, dict):
                                 logger.warning(
                                     f"Skipping invalid endpoint data for {method} {path}"
                                 )
-                                continue
-
-                            if method.upper() not in {"GET", "POST", "PUT", "DELETE", "PATCH"}:
                                 continue
 
                             # Handle $ref in endpoint data
@@ -247,19 +248,26 @@ class APIIndexer:
                                 if resolved_data:
                                     endpoint_data.update(resolved_data)
 
+                            # Merge path-level parameters with method-level parameters
+                            merged_data = endpoint_data.copy()
+                            if "parameters" in path_data:
+                                path_params = path_data["parameters"]
+                                method_params = endpoint_data.get("parameters", [])
+                                merged_data["parameters"] = path_params + method_params
+
                             # Create endpoint metadata
                             endpoint = {
                                 "path": full_path,
                                 "method": method.upper(),
-                                "description": endpoint_data.get("description", ""),
-                                "summary": endpoint_data.get("summary", ""),
+                                "description": merged_data.get("description", ""),
+                                "summary": merged_data.get("summary", ""),
                                 "api_name": api_name,
                                 "api_version": api_version,
-                                "parameters": self._extract_parameters(endpoint_data, data),
-                                "responses": self._extract_responses(endpoint_data, data),
-                                "tags": endpoint_data.get("tags", []),
-                                "requires_auth": bool(endpoint_data.get("security", [])),
-                                "deprecated": endpoint_data.get("deprecated", False),
+                                "parameters": self._extract_parameters(merged_data, data),
+                                "responses": self._extract_responses(merged_data, data),
+                                "tags": merged_data.get("tags", []),
+                                "requires_auth": bool(merged_data.get("security", [])),
+                                "deprecated": merged_data.get("deprecated", False),
                             }
 
                             # Create vector representation
