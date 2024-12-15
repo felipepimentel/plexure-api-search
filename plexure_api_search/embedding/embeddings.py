@@ -62,7 +62,7 @@ class TripleVector:
 
     def to_combined_vector(
         self, weights: Optional[Dict[str, float]] = None
-    ) -> np.ndarray:
+    ) -> List[float]:
         """Combine vectors with optional weights.
 
         Args:
@@ -70,16 +70,25 @@ class TripleVector:
                     Defaults to semantic: 0.4, structure: 0.3, parameter: 0.3
 
         Returns:
-            Combined vector representation.
+            Combined vector representation as a list of floats for serialization.
         """
         if weights is None:
             weights = {"semantic": 0.4, "structure": 0.3, "parameter": 0.3}
 
-        return (
+        combined = (
             weights["semantic"] * self.semantic_vector
             + weights["structure"] * self.structure_vector
             + weights["parameter"] * self.parameter_vector
         )
+        
+        # Ensure we return a list
+        if isinstance(combined, np.ndarray):
+            return combined.tolist()
+        elif isinstance(combined, list):
+            return combined
+        else:
+            # Convert any other type to list
+            return list(combined)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format for serialization."""
@@ -141,21 +150,21 @@ class TripleVectorizer:
         # Get embedding dimension
         self.embedding_dim = self.bi_encoder.get_sentence_embedding_dimension()
 
-    def vectorize_query(self, query: str) -> np.ndarray:
+    def vectorize_query(self, query: str) -> List[float]:
         """Generate embedding for search query.
 
         Args:
             query: Search query text
 
         Returns:
-            Query embedding vector
+            Query embedding vector as a list of floats for serialization
         """
         try:
             # Check cache first
             if self.use_cache:
                 cached = embedding_cache.get(f"query:{query}")
                 if cached is not None:
-                    return cached
+                    return cached.tolist()
 
             # Generate embedding
             vector = self.bi_encoder.encode(
@@ -166,7 +175,7 @@ class TripleVectorizer:
             if self.use_cache:
                 embedding_cache.set(f"query:{query}", vector)
 
-            return vector
+            return vector.tolist()
 
         except Exception as e:
             logger.error(f"Failed to vectorize query: {e}")

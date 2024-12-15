@@ -286,10 +286,13 @@ class APIIndexer:
 
                             # Upsert to vector store
                             try:
+                                # Ensure vector is a list
+                                vector_values = combined_vector if isinstance(combined_vector, list) else combined_vector.tolist()
+                                
                                 self.client.upsert_vectors(
                                     vectors=[{
                                         "id": endpoint_id,
-                                        "values": combined_vector.tolist(),
+                                        "values": vector_values,
                                         "metadata": endpoint,
                                     }]
                                 )
