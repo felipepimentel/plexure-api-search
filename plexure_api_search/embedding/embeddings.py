@@ -284,7 +284,17 @@ class TripleVectorizer:
 
         # Parameter types and locations
         for param in parameters:
-            param_type = param.get("schema", {}).get("type", "string")
+            # Skip if param is not a dict
+            if not isinstance(param, dict):
+                continue
+
+            # Get parameter type and location
+            schema = param.get("schema", {})
+            if isinstance(schema, dict):
+                param_type = schema.get("type", "string")
+            else:
+                param_type = "string"
+                
             param_in = param.get("in", "query")
 
             # Add type encoding

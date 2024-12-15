@@ -16,6 +16,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
+from .indexing import APIIndexer
 from .search import Consistency, SearchResult
 from .search.expansion import QueryExpander
 from .search.searcher import APISearcher
@@ -699,6 +700,71 @@ def feedback(query: str, endpoint_id: str, relevant: bool, score: float):
     )
 
     console.print("[green]Feedback recorded successfully[/green]")
+
+
+@cli.command()
+@click.option("--force", is_flag=True, help="Force reindexing of all files")
+@click.option("--validate", is_flag=True, help="Validate data before indexing")
+@click.option("-v", "--verbose", count=True, help="Increase output verbosity")
+def index(force: bool, validate: bool, verbose: int):
+    """Index API specifications from directory."""
+    try:
+        # Setup logging
+        setup_logging(verbose)
+
+        # Initialize indexer
+        indexer = APIIndexer()
+
+        # Show indexing progress
+        with console.status("[bold green]Indexing APIs...") as status:
+            result = indexer.index_directory(force=force, validate=validate)
+
+        # Show summary
+        console.print("\n[bold]Indexing Summary:[/bold]")
+        console.print(f"Total files processed: [cyan]{result['total_files']}[/cyan]")
+        console.print(
+            f"Total endpoints indexed: [green]{result['total_endpoints']}[/green]"
+        )
+
+        # Show indexed APIs
+        if result["indexed_apis"]:
+            console.print("\n[bold]Indexed APIs:[/bold]")
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("API Name")
+            table.add_column("Version")
+            table.add_column("Endpoints", justify="right")
+            table.add_column("File")
+
+            for api in result["indexed_apis"]:
+                table.add_row(
+                    api["api_name"], api["version"], str(api["endpoints"]), api["path"]
+                )
+            console.print(table)
+
+        # Show failed files
+        if result["failed_files"]:
+            console.print("\n[bold red]Failed Files:[/bold red]")
+            for failure in result["failed_files"]:
+                console.print(f"• {failure['path']}")
+                console.print(f"  Error: {failure['error']}")
+                if "details" in failure:
+                    for detail in failure["details"]:
+                        console.print(f"  - {detail}")
+
+        # Show quality metrics if available
+        if result["quality_metrics"]:
+            metrics = result["quality_metrics"]
+            console.print("\n[bold]Data Quality Metrics:[/bold]")
+            console.print(f"Completeness: [cyan]{metrics['completeness']:.2%}[/cyan]")
+            console.print(f"Consistency:  [cyan]{metrics['consistency']:.2%}[/cyan]")
+            console.print(f"Accuracy:     [cyan]{metrics['accuracy']:.2%}[/cyan]")
+            console.print(f"Uniqueness:   [cyan]{metrics['uniqueness']:.2%}[/cyan]")
+
+    except Exception as e:
+        console.print(f"\n[red]Error:[/red] {str(e)}")
+        if verbose > 0:
+            console.print_exception()
+        raise click.Abort()
 
 
 if __name__ == "__main__":

@@ -1,3 +1,6 @@
-from .indexer import APIIndexer
+"""API indexing module."""
 
-__all__ = ["APIIndexer"]
+from .indexer import APIIndexer
+from .validation import DataValidator
+
+__all__ = ["APIIndexer", "DataValidator"]
