@@ -10,8 +10,8 @@ from rich.console import Console
 
 
 @dataclass
-class QualityMetrics:
-    """Quality metrics for API data."""
+class APIDataQualityMetrics:
+    """Quality metrics for API data validation."""
     
     completeness: float
     consistency: float
@@ -69,17 +69,17 @@ class DataValidator:
                 
         return len(errors) == 0, errors
         
-    def calculate_quality_metrics(self, data: List[Dict]) -> QualityMetrics:
+    def calculate_quality_metrics(self, data: List[Dict]) -> APIDataQualityMetrics:
         """Calculate quality metrics for API data.
         
         Args:
             data: List of API data dictionaries.
             
         Returns:
-            Quality metrics.
+            Quality metrics for API data validation.
         """
         if not data:
-            return QualityMetrics(
+            return APIDataQualityMetrics(
                 completeness=0.0,
                 consistency=0.0,
                 accuracy=0.0,
@@ -134,7 +134,7 @@ class DataValidator:
         })
         uniqueness = unique_paths / len(data)
         
-        return QualityMetrics(
+        return APIDataQualityMetrics(
             completeness=completeness,
             consistency=consistency,
             accuracy=accuracy,
