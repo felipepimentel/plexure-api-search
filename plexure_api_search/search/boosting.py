@@ -1,48 +1,22 @@
 """Contextual boosting and dynamic weight adjustment."""
 
 import json
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
 
-from .config import CACHE_DIR
-
-
-@dataclass
-class SearchContext:
-    """Context information for a search query."""
-
-    query: str
-    query_type: str  # 'semantic', 'structural', 'parameter'
-    timestamp: datetime
-    user_feedback: Optional[float] = None  # 0 to 1 rating
-    success_rate: Optional[float] = None
-
-
-@dataclass
-class WeightProfile:
-    """Weight profile for different vector components."""
-
-    semantic_weight: float
-    structure_weight: float
-    parameter_weight: float
-
-    def to_dict(self) -> Dict[str, float]:
-        """Convert to dictionary format."""
-        return {
-            "semantic": self.semantic_weight,
-            "structure": self.structure_weight,
-            "parameter": self.parameter_weight,
-        }
+from ..utils import config_instance
+from .search_models import SearchContext, WeightProfile
 
 
 class ContextualBooster:
     """Handles dynamic weight adjustment based on context."""
 
-    def __init__(self, history_file: str = f"{CACHE_DIR}/search_history.json"):
+    def __init__(
+        self, history_file: str = f"{config_instance.cache_dir}/search_history.json"
+    ):
         """Initialize booster.
 
         Args:
@@ -105,7 +79,7 @@ class ContextualBooster:
             query: Search query string.
 
         Returns:
-            Query type ('semantic', 'structural', or 'parameter').
+            Query type: 'semantic', 'structural', or 'parameter'
         """
         query = query.lower()
 
@@ -175,7 +149,7 @@ class ContextualBooster:
             window: Time window to consider.
 
         Returns:
-            List of recent search contexts.
+            List of matching search contexts.
         """
         cutoff = datetime.now() - window
         return [
@@ -228,6 +202,41 @@ class ContextualBooster:
             structure_weight=base_weights.structure_weight * structural_factor,
             parameter_weight=base_weights.parameter_weight * parameter_factor,
         )
+
+    def adjust_scores(self, query: str, scores: np.ndarray) -> np.ndarray:
+        """Adjust search result scores based on context.
+
+        Args:
+            query: Search query string
+            scores: Array of initial scores
+
+        Returns:
+            Array of adjusted scores
+        """
+        # Get query type and weights
+        query_type = self.detect_query_type(query)
+        weights = self.adjust_weights(query)
+
+        # Apply type-specific boosts
+        if query_type == "semantic":
+            boost_factor = weights.semantic_weight
+        elif query_type == "structural":
+            boost_factor = weights.structure_weight
+        else:  # parameter
+            boost_factor = weights.parameter_weight
+
+        # Apply boost and normalize
+        adjusted_scores = scores * boost_factor
+        if len(adjusted_scores) > 0:
+            # Normalize to 0-1 range
+            min_score = np.min(adjusted_scores)
+            max_score = np.max(adjusted_scores)
+            if max_score > min_score:
+                adjusted_scores = (adjusted_scores - min_score) / (
+                    max_score - min_score
+                )
+
+        return adjusted_scores
 
     def record_search(self, query: str, user_feedback: Optional[float] = None) -> None:
         """Record a search event.

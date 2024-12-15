@@ -1,5 +1,16 @@
-"""Utility functions for file handling and common operations."""
+"""Utility functions and classes for the API search project."""
 
-from .file_utils import FileUtils
+import numpy as np
 
-__all__ = ["FileUtils"]
+from .cache import DiskCache
+from .config import config_instance
+from .file import File
+
+__all__ = [
+    # File utilities
+    "File",
+    # Cache utilities
+    "DiskCache",
+    # Config utilities
+    "config_instance",
+]

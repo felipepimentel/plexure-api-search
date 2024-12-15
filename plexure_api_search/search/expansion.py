@@ -1,11 +1,11 @@
 """Smart query expansion and semantic variant generation."""
 
-from typing import List, Dict, Set, Optional, Tuple
 from dataclasses import dataclass
+from typing import Dict, List, Tuple
+
+import numpy as np
 import spacy
 from sentence_transformers import SentenceTransformer
-import numpy as np
-from collections import defaultdict
 
 
 @dataclass
@@ -23,9 +23,7 @@ class QueryExpander:
     """Handles smart query expansion and variant generation."""
 
     def __init__(
-        self,
-        model_name: str = "all-MiniLM-L6-v2",
-        spacy_model: str = "en_core_web_sm"
+        self, model_name: str = "all-MiniLM-L6-v2", spacy_model: str = "en_core_web_sm"
     ):
         """Initialize query expander.
 
@@ -56,26 +54,26 @@ class QueryExpander:
                 "login user",
                 "get authentication token",
                 "verify credentials",
-                "refresh token"
+                "refresh token",
             ],
             "user_management": [
                 "create new user",
                 "update user profile",
                 "change password",
-                "delete account"
+                "delete account",
             ],
             "data_operations": [
                 "search records",
                 "filter results",
                 "sort items",
-                "paginate list"
+                "paginate list",
             ],
             "file_operations": [
                 "upload file",
                 "download document",
                 "delete image",
-                "update attachment"
-            ]
+                "update attachment",
+            ],
         }
 
     def expand_query(self, query: str) -> ExpandedQuery:
@@ -101,10 +99,7 @@ class QueryExpander:
 
         # Calculate weights
         weights = self._calculate_variant_weights(
-            query,
-            semantic_variants,
-            technical_mappings,
-            use_cases
+            query, semantic_variants, technical_mappings, use_cases
         )
 
         return ExpandedQuery(
@@ -112,7 +107,7 @@ class QueryExpander:
             semantic_variants=semantic_variants,
             technical_mappings=technical_mappings,
             use_cases=use_cases,
-            weights=weights
+            weights=weights,
         )
 
     def _generate_semantic_variants(self, doc: spacy.tokens.Doc) -> List[str]:
@@ -138,10 +133,10 @@ class QueryExpander:
         # Combine variations
         for token in base_tokens:
             # Add singular/plural forms
-            if token.endswith('s'):
+            if token.endswith("s"):
                 variants.add(token[:-1])
             else:
-                variants.add(token + 's')
+                variants.add(token + "s")
 
             # Add common prefixes
             variants.add(f"get_{token}")
@@ -215,7 +210,7 @@ class QueryExpander:
         original_query: str,
         semantic_variants: List[str],
         technical_mappings: List[str],
-        use_cases: List[str]
+        use_cases: List[str],
     ) -> Dict[str, float]:
         """Calculate weights for each query variant.
 
@@ -241,7 +236,9 @@ class QueryExpander:
         for mapping in technical_mappings:
             mapping_embedding = self.model.encode(mapping)
             similarity = float(np.dot(query_embedding, mapping_embedding))
-            weights[mapping] = similarity * 0.8  # Slightly lower weight for technical mappings
+            weights[mapping] = (
+                similarity * 0.8
+            )  # Slightly lower weight for technical mappings
 
         # Calculate weights for use cases
         for use_case in use_cases:
@@ -252,14 +249,12 @@ class QueryExpander:
         # Normalize weights
         total_weight = sum(weights.values())
         if total_weight > 0:
-            weights = {k: v/total_weight for k, v in weights.items()}
+            weights = {k: v / total_weight for k, v in weights.items()}
 
         return weights
 
     def get_expanded_terms(
-        self,
-        query: str,
-        min_weight: float = 0.1
+        self, query: str, min_weight: float = 0.1
     ) -> List[Tuple[str, float]]:
         """Get expanded search terms with weights.
 

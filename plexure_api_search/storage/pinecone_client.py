@@ -6,63 +6,42 @@ from typing import Any, Dict, List, Optional
 
 from pinecone import Pinecone, ServerlessSpec
 
+from ..utils import config_instance
+
 logger = logging.getLogger(__name__)
 
 
 class PineconeClient:
     """Centralized client for Pinecone operations."""
 
-    def __init__(
-        self,
-        api_key: str,
-        environment: str,
-        index_name: str,
-        dimension: int = 384,
-        metric: str = "dotproduct",
-        cloud: str = "aws",
-        region: str = "us-east-1",
-    ):
-        """Initialize Pinecone client.
+    def __init__(self):
+        """Initialize Pinecone client."""
 
-        Args:
-            api_key: Pinecone API key
-            environment: Pinecone environment
-            index_name: Name of the index to use
-            dimension: Vector dimension (default: 384)
-            metric: Distance metric (default: dotproduct)
-            cloud: Cloud provider (default: aws)
-            region: Cloud region (default: us-east-1)
-        """
-        if not api_key:
-            raise ValueError("Pinecone API key is required")
-        if not index_name:
-            raise ValueError("Index name is required")
-        if not environment:
-            raise ValueError("Environment is required")
-
-        self.index_name = index_name
-        self.dimension = dimension
-        self.metric = metric
+        self.index_name = config_instance.pinecone_index
+        self.dimension = config_instance.pinecone_dimension
+        self.metric = config_instance.pinecone_metric
+        self.cloud = config_instance.pinecone_cloud
+        self.region = config_instance.pinecone_region
 
         # Initialize Pinecone
         try:
-            pc = Pinecone(api_key=api_key)
+            pc = Pinecone(api_key=config_instance.pinecone_api_key)
 
             # Check if index exists
             existing_indexes = [index.name for index in pc.list_indexes()]
 
-            if index_name not in existing_indexes:
-                logger.info(f"Creating new index: {index_name}")
+            if self.index_name not in existing_indexes:
+                logger.info(f"Creating new index: {self.index_name}")
                 pc.create_index(
-                    name=index_name,
-                    dimension=dimension,
-                    metric=metric,
-                    spec=ServerlessSpec(cloud=cloud, region=region),
+                    name=self.index_name,
+                    dimension=self.dimension,
+                    metric=self.metric,
+                    spec=ServerlessSpec(cloud=self.cloud, region=self.region),
                 )
                 time.sleep(2)  # Wait for index creation
 
             # Get index instance
-            self.index = pc.Index(index_name)
+            self.index = pc.Index(self.index_name)
 
             # Verify connection and get stats
             self._verify_connection()
@@ -193,3 +172,6 @@ class PineconeClient:
         except Exception as e:
             logger.error(f"Failed to get vector count: {e}")
             return 0
+
+
+pinecone_instance = PineconeClient()

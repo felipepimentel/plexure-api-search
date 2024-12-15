@@ -7,13 +7,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from .config import CACHE_DIR, HEALTH_DIR, METRICS_DIR
+from ..utils import config_instance
 
 
-class ProjectHealth:
+class Consistency:
     """Monitors and validates project consistency."""
 
-    def __init__(self, cache_file: str = f"{HEALTH_DIR}/consistency.json"):
+    def __init__(
+        self, cache_file: str = f"{config_instance.health_dir}/consistency.json"
+    ):
         """Initialize health checker.
 
         Args:
@@ -76,9 +78,9 @@ class ProjectHealth:
             Dictionary of cache status.
         """
         cache_paths = [
-            f"{CACHE_DIR}/search_history.json",
-            f"{METRICS_DIR}/search_quality.json",
-            f"{HEALTH_DIR}/consistency.json",
+            f"{config_instance.cache_dir}/search_history.json",
+            f"{config_instance.metrics_dir}/search_quality.json",
+            f"{config_instance.health_dir}/consistency.json",
         ]
 
         status = {}
@@ -108,11 +110,11 @@ class ProjectHealth:
         Returns:
             Dictionary of API consistency status.
         """
-        from .boosting import ContextualBooster
-        from .embeddings import TripleVectorizer
+        from .embedding.embeddings import TripleVectorizer
         from .expansion import QueryExpander
         from .quality import QualityMetrics
-        from .searcher import APISearcher
+        from .search.boosting import ContextualBooster
+        from .search.searcher import APISearcher
         from .understanding import ZeroShotUnderstanding
 
         components = {

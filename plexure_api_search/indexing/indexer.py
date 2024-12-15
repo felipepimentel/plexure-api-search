@@ -3,12 +3,12 @@
 import logging
 from typing import Dict, List
 
-from .api_spec import APISpec
-from .config import API_DIR
-from .embeddings import TripleVectorizer
-from .metadata import Metadata
-from .pinecone_client import PineconeClient
-from .utils import FileUtils
+from ..model.api_spec import APISpec
+from ..utils.config import API_DIR
+from ..embedding.embeddings import TripleVectorizer
+from ..utils.file import FileUtils
+from ..model.metadata import Metadata
+from ..storage.pinecone_client import PineconeClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
