@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from ..utils import config_instance
+from ..config import config_instance
 
 
 class Consistency:

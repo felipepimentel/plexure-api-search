@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pinecone import Pinecone, ServerlessSpec
 
-from ..utils import config_instance
+from ..config import config_instance
 
 logger = logging.getLogger(__name__)
 

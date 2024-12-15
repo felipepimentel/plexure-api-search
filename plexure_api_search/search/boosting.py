@@ -7,7 +7,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from ..utils import config_instance
+from ..config import config_instance
 from .search_models import SearchContext, WeightProfile
 
 
