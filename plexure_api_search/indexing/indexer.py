@@ -3,12 +3,12 @@
 import logging
 from typing import Dict, List
 
-from ..model.api_spec import APISpec
-from ..utils.config import API_DIR
+from ..api.api_spec import APISpec
+from ..api.metadata import Metadata
+from ..config import config_instance
 from ..embedding.embeddings import TripleVectorizer
-from ..utils.file import FileUtils
-from ..model.metadata import Metadata
 from ..storage.pinecone_client import PineconeClient
+from ..utils import File
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class APIIndexer:
     """Indexes API contracts with triple vector embeddings."""
 
-    def __init__(self, pinecone_client: PineconeClient, api_dir: str = API_DIR):
+    def __init__(self, pinecone_client: PineconeClient):
         """Initialize indexer.
 
         Args:
@@ -25,7 +25,7 @@ class APIIndexer:
             api_dir: Directory containing API contracts
         """
         self.client = pinecone_client
-        self.api_dir = api_dir
+        self.api_dir = config_instance.api_dir
         self.vectorizer = TripleVectorizer()
 
     def index_apis(self, force: bool = False) -> None:
@@ -69,11 +69,11 @@ class APIIndexer:
         endpoints = []
 
         # Find API files
-        api_files = FileUtils.find_api_files(self.api_dir)
+        api_files = File.find_api_files(self.api_dir)
 
         # Process each file
         for file_path in api_files:
-            spec = FileUtils.load_api_file(file_path)
+            spec = File.load_api_file(file_path)
             if spec:
                 endpoints.extend(APISpec.extract_endpoints(spec))
 

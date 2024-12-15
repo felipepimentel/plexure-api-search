@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 from ..embedding.embeddings import TripleVectorizer
 from ..storage import pinecone_instance
 from ..utils.cache import DiskCache
-from ..utils.config import config_instance
+from ..config import config_instance
 from .boosting import ContextualBooster
 from .expansion import QueryExpander
 from .quality import QualityMetrics

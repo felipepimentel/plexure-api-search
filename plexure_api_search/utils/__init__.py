@@ -3,7 +3,6 @@
 import numpy as np
 
 from .cache import DiskCache
-from .config import config_instance
 from .file import File
 
 __all__ = [
@@ -11,6 +10,4 @@ __all__ = [
     "File",
     # Cache utilities
     "DiskCache",
-    # Config utilities
-    "config_instance",
 ]

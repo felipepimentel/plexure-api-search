@@ -8,7 +8,7 @@ from typing import Any, Generic, Optional, TypeVar
 import numpy as np
 from diskcache import Cache
 
-from .config import config_instance
+from ..config import config_instance
 
 logger = logging.getLogger(__name__)
 

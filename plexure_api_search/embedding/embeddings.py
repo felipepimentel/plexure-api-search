@@ -9,7 +9,7 @@ from sentence_transformers import CrossEncoder, SentenceTransformer
 from sklearn.decomposition import PCA
 
 from ..utils.cache import DiskCache
-from ..utils.config import config_instance
+from ..config import config_instance
 
 logger = logging.getLogger(__name__)
 
