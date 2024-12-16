@@ -1,15 +1,16 @@
 """API contract indexing and vector creation."""
 
+import json
 import logging
+import os
 import traceback
 from typing import Any, Dict, List, Optional
-import json
-import os
 
 import yaml
 
 from ..config import config_instance
 from ..embedding.embeddings import TripleVectorizer
+from ..enrichment import LLMEnricher
 from ..integrations import pinecone_instance
 from ..integrations.llm.openrouter_client import OpenRouterClient
 from ..utils.file import find_api_files
@@ -27,6 +28,7 @@ class APIIndexer:
         self.vectorizer = TripleVectorizer()
         self.validator = DataValidator()
         self.llm = OpenRouterClient()
+        self.enricher = LLMEnricher(self.llm)
 
     def _safe_load_yaml(self, file_path: str) -> Optional[Dict[str, Any]]:
         """Safely load YAML/JSON file.
@@ -39,56 +41,62 @@ class APIIndexer:
         """
         try:
             logger.debug(f"Loading file: {file_path}")
-            
+
             # Check file exists
             if not os.path.exists(file_path):
                 logger.error(f"File not found: {file_path}")
                 return None
-            
+
             # Check file extension
             ext = os.path.splitext(file_path)[1].lower()
-            if ext not in ['.yaml', '.yml', '.json']:
+            if ext not in [".yaml", ".yml", ".json"]:
                 logger.error(f"Unsupported file extension: {ext}")
                 return None
 
             # Read file content
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            
+
             # Try to load as YAML first
             try:
-                if ext in ['.yaml', '.yml']:
+                if ext in [".yaml", ".yml"]:
                     data = yaml.safe_load(content)
                 else:
                     data = json.loads(content)
-                
+
                 # Validate basic structure
                 if not isinstance(data, dict):
-                    logger.error(f"Invalid file format - root must be an object: {file_path}")
+                    logger.error(
+                        f"Invalid file format - root must be an object: {file_path}"
+                    )
                     return None
-                
-                if 'paths' not in data:
+
+                if "paths" not in data:
                     logger.error(f"Invalid API spec - missing paths: {file_path}")
                     return None
-                
-                if not isinstance(data['paths'], dict):
-                    logger.error(f"Invalid API spec - paths must be an object: {file_path}")
+
+                if not isinstance(data["paths"], dict):
+                    logger.error(
+                        f"Invalid API spec - paths must be an object: {file_path}"
+                    )
                     return None
-                
+
                 logger.debug(f"Successfully loaded file: {file_path}")
                 return data
-                
+
             except yaml.YAMLError as e:
                 logger.error(f"YAML parsing error in {file_path}: {e}")
-                if hasattr(e, 'problem_mark'):
+                if hasattr(e, "problem_mark"):
                     mark = e.problem_mark
-                    logger.error(f"Error position: line {mark.line + 1}, column {mark.column + 1}")
+                    logger.error(
+                        f"Error position: line {mark.line + 1}, column {mark.column + 1}"
+                    )
                 return None
-                
+
             except json.JSONDecodeError as e:
                 logger.error(f"JSON parsing error in {file_path}: {e}")
                 return None
-                
+
         except Exception as e:
             logger.error(f"Error loading file {file_path}: {e}")
             logger.error(traceback.format_exc())
@@ -222,7 +230,9 @@ class APIIndexer:
                                 ),
                                 "endpoints": len(endpoints),
                             })
-                            logger.info(f"Successfully indexed {len(endpoints)} endpoints from {file_path}")
+                            logger.info(
+                                f"Successfully indexed {len(endpoints)} endpoints from {file_path}"
+                            )
                         else:
                             logger.warning(f"No endpoints found in {file_path}")
                             failed_files.append({
@@ -385,13 +395,19 @@ class APIIndexer:
 
                             # Enrich endpoint with LLM-generated content
                             try:
-                                enriched_endpoint = self.llm.enrich_endpoint(endpoint)
+                                enriched_endpoint = self.enricher.enrich_endpoint(endpoint)
                                 if "enriched" in enriched_endpoint:
                                     # Serialize enriched data as JSON string
-                                    endpoint["enriched"] = json.dumps(enriched_endpoint["enriched"])
-                                logger.info(f"Enriched endpoint {method} {path} with LLM content")
+                                    endpoint["enriched"] = json.dumps(
+                                        enriched_endpoint["enriched"]
+                                    )
+                                logger.info(
+                                    f"Enriched endpoint {method} {path} with LLM content"
+                                )
                             except Exception as e:
-                                logger.error(f"Failed to enrich endpoint {method} {path}: {e}")
+                                logger.error(
+                                    f"Failed to enrich endpoint {method} {path}: {e}"
+                                )
 
                             # Create vector representation
                             vector = self.vectorizer.vectorize(endpoint)
@@ -433,14 +449,22 @@ class APIIndexer:
                                     ]
                                 )
                                 endpoints.append(endpoint)
-                                logger.info(f"Successfully indexed endpoint {method} {path}")
+                                logger.info(
+                                    f"Successfully indexed endpoint {method} {path}"
+                                )
                             except Exception as e:
                                 logger.error(
                                     f"Error upserting endpoint {endpoint_id}: {e}"
                                 )
-                                logger.error(f"Vector values type: {type(vector_values)}")
-                                logger.error(f"Vector values shape: {len(vector_values)}")
-                                logger.error(f"Endpoint metadata: {json.dumps(endpoint, indent=2)}")
+                                logger.error(
+                                    f"Vector values type: {type(vector_values)}"
+                                )
+                                logger.error(
+                                    f"Vector values shape: {len(vector_values)}"
+                                )
+                                logger.error(
+                                    f"Endpoint metadata: {json.dumps(endpoint, indent=2)}"
+                                )
 
                         except Exception as e:
                             logger.error(
