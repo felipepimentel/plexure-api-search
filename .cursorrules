@@ -44,12 +44,20 @@
 - Use type hints for all function parameters and return values
 - Maximum line length: 100 characters
 - Use docstrings for all public functions and classes
+- Use consistent naming conventions across all files
+- Add comments for complex logic or business rules
+- Keep functions focused and single-purpose
+- Use meaningful variable names that describe their purpose
 
 # Project Structure
 - Keep all core logic in plexure_api_search/ directory
 - Place all tests in tests/ directory
 - Store configuration files in project root
 - Keep documentation in docs/ directory
+- Organize modules by feature/domain
+- Use __init__.py files to control public APIs
+- Keep circular dependencies strictly forbidden
+- Maintain clear separation of concerns
 
 # Testing
 - Write unit tests for all new functionality
@@ -57,6 +65,11 @@
 - Place tests in tests/ directory
 - Name test files with test_ prefix
 - Test files must match source file names
+- Include integration tests for critical paths
+- Mock external dependencies appropriately
+- Test error conditions and edge cases
+- Use pytest fixtures for common setup
+- Include performance tests for critical operations
 
 # Documentation
 - Document all public APIs with docstrings
@@ -64,6 +77,10 @@
 - Include usage examples in docstrings
 - Document complex algorithms with comments
 - Maintain API documentation in docs/
+- Include type hints in documentation
+- Document error conditions and handling
+- Keep configuration options documented
+- Include troubleshooting guides
 
 # Dependencies
 - Use Poetry for dependency management
@@ -71,6 +88,10 @@
 - Keep dependencies up to date
 - Document new dependencies in README.md
 - Use requirements-dev.txt for development dependencies
+- Make optional dependencies truly optional
+- Handle dependency conflicts gracefully
+- Document minimum version requirements
+- Test with multiple Python versions
 
 # Environment
 - Use .env for environment variables
@@ -78,6 +99,32 @@
 - Keep .env.sample updated
 - Use Python 3.9 or higher
 - Document all environment variables
+- Provide default values when appropriate
+- Validate environment variables at startup
+- Handle missing variables gracefully
+- Support different environments (dev/prod)
+
+# Model Management
+- Use public, well-established models by default
+- Handle model loading errors gracefully
+- Implement fallback models for robustness
+- Cache model artifacts appropriately
+- Monitor model performance metrics
+- Support model versioning
+- Handle tokenization errors gracefully
+- Validate model compatibility
+- Document model requirements and limitations
+
+# Error Handling
+- Use specific exception types
+- Log errors with appropriate context
+- Implement graceful fallbacks
+- Validate inputs early
+- Handle resource cleanup properly
+- Provide meaningful error messages
+- Include error recovery mechanisms
+- Monitor error rates and patterns
+- Document error handling procedures
 
 # Performance
 - Cache expensive operations
@@ -85,6 +132,11 @@
 - Monitor memory usage
 - Keep response times under 200ms
 - Profile performance-critical code
+- Implement request timeouts
+- Use connection pooling
+- Implement rate limiting
+- Monitor resource utilization
+- Optimize database queries
 
 # Security
 - Validate all inputs
@@ -92,6 +144,11 @@
 - Use environment variables for secrets
 - Follow security best practices
 - Never log sensitive data
+- Implement rate limiting
+- Use secure communication
+- Validate authentication tokens
+- Implement access controls
+- Monitor security events
 
 # Monitoring
 - Log important operations
@@ -99,6 +156,11 @@
 - Monitor error rates
 - Use structured logging
 - Implement health checks
+- Track resource utilization
+- Monitor API latencies
+- Implement alerting
+- Track business metrics
+- Monitor cache effectiveness
 
 # Version Control
 - Write clear commit messages
@@ -106,3 +168,8 @@
 - Keep feature branches small
 - Merge only after tests pass
 - Use conventional commits format
+- Review code changes
+- Maintain changelog
+- Tag releases properly
+- Document breaking changes
+- Keep main branch stable

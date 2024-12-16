@@ -1,12 +1,12 @@
-"""Generic disk-based cache implementation."""
+"""Advanced caching system with disk and Redis support."""
 
+import json
 import logging
-from datetime import datetime, timedelta
+import os
+import pickle
+import time
 from pathlib import Path
-from typing import Any, Generic, Optional, TypeVar
-
-import numpy as np
-from diskcache import Cache
+from typing import Any, Dict, Generic, Optional, TypeVar, Union
 
 from ..config import config_instance
 
@@ -14,136 +14,326 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+class RedisUnavailable(Exception):
+    """Raised when Redis is not available but was requested."""
+    pass
 
-class DiskCache(Generic[T]):
-    """Generic disk-based cache implementation."""
+# Conditional Redis import
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    redis = None  # type: ignore
 
-    def __init__(
-        self,
-        namespace: str,
-        ttl: int,
-        cache_dir: Optional[str] = None,
-    ):
-        """Initialize cache.
 
-        Args:
-            namespace: Cache namespace (e.g. 'embeddings', 'search')
-            ttl: Time to live in seconds
-            cache_dir: Optional custom cache directory. If not provided, uses config_instance.cache_dir
-        """
-        self.namespace = namespace
-        self.ttl = ttl
-
-        base_dir = cache_dir or config_instance.cache_dir
-        self.cache_dir = Path(f"{base_dir}/{namespace}")
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-
-        # Initialize disk cache
-        self.cache = Cache(str(self.cache_dir))
+class BaseCache(Generic[T]):
+    """Base cache interface."""
 
     def get(self, key: str) -> Optional[T]:
-        """Get cached value.
+        """Get value from cache.
 
         Args:
             key: Cache key
 
         Returns:
-            Cached value if found and valid, None otherwise
+            Cached value or None if not found
         """
-        cache_key = self._get_cache_key(key)
-        cached = self.cache.get(cache_key)
+        raise NotImplementedError
 
-        if cached is None:
-            return None
-
-        # Check if expired
-        if (
-            datetime.fromisoformat(cached["timestamp"]) + timedelta(seconds=self.ttl)
-            < datetime.now()
-        ):
-            self.cache.delete(cache_key)
-            return None
-
-        return self._deserialize_value(cached["value"])
-
-    def set(self, key: str, value: T) -> None:
-        """Store value in cache.
+    def set(self, key: str, value: T, ttl: Optional[int] = None) -> None:
+        """Set value in cache.
 
         Args:
             key: Cache key
             value: Value to cache
+            ttl: Optional TTL in seconds
         """
-        cache_key = self._get_cache_key(key)
-        self.cache.set(
-            cache_key,
-            {
-                "timestamp": datetime.now().isoformat(),
-                "value": self._serialize_value(value),
-            },
-        )
+        raise NotImplementedError
 
     def delete(self, key: str) -> None:
-        """Delete a value from cache.
+        """Delete value from cache.
 
         Args:
             key: Cache key
         """
-        cache_key = self._get_cache_key(key)
-        self.cache.delete(cache_key)
+        raise NotImplementedError
 
     def clear(self) -> None:
         """Clear all cached values."""
-        self.cache.clear()
+        raise NotImplementedError
 
-    def _get_cache_key(self, key: str) -> str:
-        """Generate cache key.
 
-        Args:
-            key: Original key
+class DiskCache(BaseCache[T]):
+    """Disk-based cache implementation."""
 
-        Returns:
-            Namespaced cache key
-        """
-        return f"{self.namespace}:{key.lower().strip()}"
-
-    def _serialize_value(self, value: T) -> Any:
-        """Serialize value for storage.
-
-        Handles numpy arrays and other special types.
+    def __init__(
+        self,
+        namespace: str,
+        ttl: int = 3600,
+        cache_dir: Optional[Path] = None,
+    ):
+        """Initialize disk cache.
 
         Args:
-            value: Value to serialize
-
-        Returns:
-            Serialized value
+            namespace: Cache namespace
+            ttl: Cache TTL in seconds
+            cache_dir: Optional cache directory
         """
-        if isinstance(value, np.ndarray):
-            return {
-                "__type__": "ndarray",
-                "data": value.tolist(),
-                "dtype": str(value.dtype),
-            }
-        elif isinstance(value, dict):
-            return {key: self._serialize_value(val) for key, val in value.items()}
-        elif isinstance(value, list):
-            return [self._serialize_value(item) for item in value]
-        return value
+        self.namespace = namespace
+        self.ttl = ttl
+        self.cache_dir = cache_dir or config_instance.cache_dir / namespace
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def _deserialize_value(self, value: Any) -> T:
-        """Deserialize value from storage.
-
-        Handles numpy arrays and other special types.
+    def _get_path(self, key: str) -> Path:
+        """Get cache file path.
 
         Args:
-            value: Value to deserialize
+            key: Cache key
 
         Returns:
-            Deserialized value
+            Cache file path
         """
-        if isinstance(value, dict):
-            if value.get("__type__") == "ndarray":
-                return np.array(value["data"], dtype=value["dtype"])
-            return {key: self._deserialize_value(val) for key, val in value.items()}
-        elif isinstance(value, list):
-            return [self._deserialize_value(item) for item in value]
-        return value
+        # Use hash to avoid file system issues with long keys
+        hashed_key = str(hash(key))
+        return self.cache_dir / f"{hashed_key}.cache"
+
+    def _is_valid(self, path: Path) -> bool:
+        """Check if cache entry is still valid.
+
+        Args:
+            path: Cache file path
+
+        Returns:
+            True if valid, False otherwise
+        """
+        try:
+            if not path.exists():
+                return False
+            
+            # Check TTL
+            mtime = path.stat().st_mtime
+            age = time.time() - mtime
+            return age < self.ttl
+
+        except Exception as e:
+            logger.error(f"Error checking cache validity: {e}")
+            return False
+
+    def get(self, key: str) -> Optional[T]:
+        """Get value from cache.
+
+        Args:
+            key: Cache key
+
+        Returns:
+            Cached value or None if not found
+        """
+        try:
+            path = self._get_path(key)
+            
+            # Check validity
+            if not self._is_valid(path):
+                if path.exists():
+                    path.unlink()
+                return None
+
+            # Load value
+            with path.open("rb") as f:
+                return pickle.load(f)
+
+        except Exception as e:
+            logger.error(f"Error reading from cache: {e}")
+            return None
+
+    def set(self, key: str, value: T, ttl: Optional[int] = None) -> None:
+        """Set value in cache.
+
+        Args:
+            key: Cache key
+            value: Value to cache
+            ttl: Optional TTL in seconds (overrides default)
+        """
+        try:
+            path = self._get_path(key)
+            
+            # Save value
+            with path.open("wb") as f:
+                pickle.dump(value, f)
+
+            # Update modification time for TTL
+            os.utime(path, None)
+
+        except Exception as e:
+            logger.error(f"Error writing to cache: {e}")
+
+    def delete(self, key: str) -> None:
+        """Delete value from cache.
+
+        Args:
+            key: Cache key
+        """
+        try:
+            path = self._get_path(key)
+            if path.exists():
+                path.unlink()
+
+        except Exception as e:
+            logger.error(f"Error deleting from cache: {e}")
+
+    def clear(self) -> None:
+        """Clear all cached values."""
+        try:
+            for path in self.cache_dir.glob("*.cache"):
+                path.unlink()
+
+        except Exception as e:
+            logger.error(f"Error clearing cache: {e}")
+
+
+class RedisCache(BaseCache[T]):
+    """Redis-based cache implementation."""
+
+    def __init__(
+        self,
+        namespace: str,
+        ttl: int = 3600,
+        redis_url: Optional[str] = None,
+    ):
+        """Initialize Redis cache.
+
+        Args:
+            namespace: Cache namespace
+            ttl: Cache TTL in seconds
+            redis_url: Optional Redis URL (defaults to config)
+
+        Raises:
+            RedisUnavailable: If Redis package is not installed
+        """
+        if not REDIS_AVAILABLE:
+            raise RedisUnavailable(
+                "Redis package is not installed. Please install it with: pip install redis"
+            )
+
+        self.namespace = namespace
+        self.ttl = ttl
+        
+        # Connect to Redis
+        redis_url = redis_url or config_instance.redis_url
+        if not redis_url:
+            raise ValueError("Redis URL is required")
+            
+        self.redis = redis.from_url(redis_url)
+        logger.info(f"Connected to Redis at {redis_url}")
+
+    def _get_key(self, key: str) -> str:
+        """Get namespaced cache key.
+
+        Args:
+            key: Cache key
+
+        Returns:
+            Namespaced key
+        """
+        return f"{self.namespace}:{key}"
+
+    def get(self, key: str) -> Optional[T]:
+        """Get value from cache.
+
+        Args:
+            key: Cache key
+
+        Returns:
+            Cached value or None if not found
+        """
+        try:
+            value = self.redis.get(self._get_key(key))
+            if value is None:
+                return None
+                
+            return pickle.loads(value)
+
+        except Exception as e:
+            logger.error(f"Error reading from Redis: {e}")
+            return None
+
+    def set(self, key: str, value: T, ttl: Optional[int] = None) -> None:
+        """Set value in cache.
+
+        Args:
+            key: Cache key
+            value: Value to cache
+            ttl: Optional TTL in seconds (overrides default)
+        """
+        try:
+            # Serialize value
+            serialized = pickle.dumps(value)
+            
+            # Set in Redis with TTL
+            self.redis.setex(
+                self._get_key(key),
+                ttl or self.ttl,
+                serialized,
+            )
+
+        except Exception as e:
+            logger.error(f"Error writing to Redis: {e}")
+
+    def delete(self, key: str) -> None:
+        """Delete value from cache.
+
+        Args:
+            key: Cache key
+        """
+        try:
+            self.redis.delete(self._get_key(key))
+
+        except Exception as e:
+            logger.error(f"Error deleting from Redis: {e}")
+
+    def clear(self) -> None:
+        """Clear all cached values in namespace."""
+        try:
+            # Get all keys in namespace
+            pattern = f"{self.namespace}:*"
+            keys = self.redis.keys(pattern)
+            
+            # Delete all keys
+            if keys:
+                self.redis.delete(*keys)
+
+        except Exception as e:
+            logger.error(f"Error clearing Redis cache: {e}")
+
+
+def get_cache(
+    namespace: str,
+    ttl: int = 3600,
+    backend: Optional[str] = None,
+) -> BaseCache[T]:
+    """Get cache instance based on configuration.
+
+    Args:
+        namespace: Cache namespace
+        ttl: Cache TTL in seconds
+        backend: Optional backend override
+
+    Returns:
+        Cache instance
+    """
+    backend = backend or config_instance.cache_backend
+    
+    if backend == "redis" and config_instance.redis_url:
+        return RedisCache(
+            namespace=namespace,
+            ttl=ttl,
+            redis_url=config_instance.redis_url,
+        )
+    else:
+        return DiskCache(
+            namespace=namespace,
+            ttl=ttl,
+        )
+
+
+__all__ = ["BaseCache", "DiskCache", "RedisCache", "get_cache"]

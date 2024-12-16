@@ -9,6 +9,49 @@ from ..utils.json_utils import clean_json_string
 
 logger = logging.getLogger(__name__)
 
+# Business-focused suggestion categories
+BUSINESS_CATEGORIES = {
+    "quick_start": {
+        "priority": 0.9,
+        "description": "Essential endpoints for getting started",
+        "value_prop": "Fastest path to implementation"
+    },
+    "revenue_generating": {
+        "priority": 0.8,
+        "description": "Endpoints that directly drive revenue",
+        "value_prop": "Direct business value generation"
+    },
+    "cost_saving": {
+        "priority": 0.7,
+        "description": "Endpoints that optimize operations",
+        "value_prop": "Operational cost reduction"
+    },
+    "customer_experience": {
+        "priority": 0.8,
+        "description": "Endpoints that enhance user experience",
+        "value_prop": "Improved customer satisfaction"
+    },
+    "integration": {
+        "priority": 0.6,
+        "description": "Endpoints for system integration",
+        "value_prop": "Seamless system connectivity"
+    },
+    "analytics": {
+        "priority": 0.7,
+        "description": "Endpoints for business insights",
+        "value_prop": "Data-driven decision making"
+    },
+    "compliance": {
+        "priority": 0.8,
+        "description": "Endpoints for regulatory compliance",
+        "value_prop": "Risk mitigation and compliance"
+    },
+    "optimization": {
+        "priority": 0.6,
+        "description": "Endpoints for performance optimization",
+        "value_prop": "Enhanced system efficiency"
+    }
+}
 
 class QueryEnhancer:
     """Handles query enhancement and suggestions using LLM."""
@@ -87,154 +130,191 @@ Format the response as JSON with these keys:
             return {"results": results}
 
     def suggest_related_queries(self, query: str) -> List[Dict[str, Any]]:
-        """Generate related search queries.
+        """Generate business-focused query suggestions.
 
         Args:
             query: Original search query
 
         Returns:
-            List of related queries with metadata
+            List of query suggestions with business context
         """
         try:
-            # Create cache key
-            cache_key = None
-            if self.use_cache:
-                cache_key = f"suggest_{query}"
+            # Check cache
+            cache_key = f"business_suggestions:{query}"
+            cached = self.cache.get(cache_key)
+            if cached:
+                return cached
 
-            # Build suggestion prompt with strict JSON format requirement
-            system_prompt = (
-                "You are a JSON formatting assistant. You ONLY output valid JSON arrays. "
-                "Never output numbered lists, text, or explanations. "
-                "Only respond with the exact JSON array requested."
+            # Get LLM suggestions
+            prompt = self._create_business_prompt(query)
+            response = self.llm.call(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=1000
             )
 
-            user_prompt = (
-                "{"
-                f'"task": "Generate 5 related queries for: {query}",'
-                '"format": "json_array",'
-                '"required_fields": ["query", "category", "description", "score"],'
-                '"valid_categories": ["alternative", "related", "use_case", "implementation", "error"],'
-                '"example": [{"query": "example", "category": "alternative", "description": "why", "score": 0.9}]'
-                "}"
-            )
+            if "error" in response:
+                logger.error(f"Failed to get suggestions: {response['error']}")
+                return []
 
-            # Get LLM response
-            response = self.llm_provider.call(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                cache_key=cache_key,
-                temperature=0.7,
-                max_tokens=512,
-            )
+            content = response["choices"][0]["message"]["content"]
+            
+            try:
+                suggestions = eval(content)  # Convert string to list of dicts
+            except:
+                logger.error(f"Failed to parse suggestions: {content}")
+                return []
 
-            # Extract suggestions
-            if "error" not in response and "choices" in response:
+            # Validate and enhance suggestions
+            valid_suggestions = []
+            for i, suggestion in enumerate(suggestions):
                 try:
-                    content = response["choices"][0]["message"]["content"].strip()
-                    logger.debug(f"Raw suggestion content: {content}")
-
-                    # Clean JSON content and ensure it starts with [
-                    content = clean_json_string(content)
-                    if not content.startswith("["):
-                        logger.error("Content does not start with [")
-                        raise ValueError("Invalid JSON array format")
-                    logger.debug(f"Cleaned suggestion content: {content}")
-
-                    # Parse JSON
-                    suggestions = json.loads(content)
-                    logger.debug(f"Parsed suggestions: {json.dumps(suggestions, indent=2)}")
-
-                    # Validate suggestions
-                    if not isinstance(suggestions, list):
-                        logger.error("Response was not a JSON array")
-                        raise ValueError("Response must be a JSON array")
-
-                    valid_suggestions = []
+                    # Basic validation
                     required_fields = {"query", "category", "description", "score"}
-                    valid_categories = {
-                        "alternative",
-                        "related",
-                        "use_case",
-                        "implementation",
-                        "error",
+                    if not all(field in suggestion for field in required_fields):
+                        continue
+
+                    # Validate category
+                    category = suggestion["category"]
+                    if category not in BUSINESS_CATEGORIES:
+                        continue
+
+                    # Enhance with business metadata
+                    enhanced = {
+                        "query": suggestion["query"],
+                        "category": category,
+                        "description": suggestion["description"],
+                        "score": float(suggestion["score"]),
+                        "value_proposition": BUSINESS_CATEGORIES[category]["value_prop"],
+                        "business_priority": BUSINESS_CATEGORIES[category]["priority"],
+                        "implementation_complexity": self._estimate_complexity(suggestion["query"]),
+                        "estimated_time_to_value": self._estimate_time_to_value(category),
+                        "suggested_next_steps": self._get_next_steps(category),
                     }
 
-                    for i, suggestion in enumerate(suggestions[:5]):
-                        try:
-                            # Validate all required fields are present
-                            if not isinstance(suggestion, dict):
-                                logger.error(f"Suggestion {i} is not a dictionary: {suggestion}")
-                                continue
+                    valid_suggestions.append(enhanced)
 
-                            if not all(field in suggestion for field in required_fields):
-                                logger.error(f"Suggestion {i} missing required fields: {suggestion}")
-                                continue
+                except Exception as e:
+                    logger.error(f"Error processing suggestion {i}: {e}")
+                    continue
 
-                            # Validate field types and values
-                            if not isinstance(suggestion["query"], str):
-                                logger.error(f"Suggestion {i} query is not a string: {suggestion['query']}")
-                                continue
+            # Sort by business priority and score
+            valid_suggestions.sort(
+                key=lambda x: (
+                    x["business_priority"],
+                    x["score"]
+                ),
+                reverse=True
+            )
 
-                            if not isinstance(suggestion["category"], str) or suggestion["category"] not in valid_categories:
-                                logger.error(f"Suggestion {i} has invalid category: {suggestion['category']}")
-                                continue
+            # Cache results
+            if valid_suggestions:
+                self.cache.set(cache_key, valid_suggestions)
 
-                            if not isinstance(suggestion["description"], str):
-                                logger.error(f"Suggestion {i} description is not a string: {suggestion['description']}")
-                                continue
-
-                            try:
-                                score = float(suggestion["score"])
-                                if not 0 <= score <= 1:
-                                    logger.error(f"Suggestion {i} score not between 0 and 1: {score}")
-                                    continue
-                            except (TypeError, ValueError):
-                                logger.error(f"Suggestion {i} score is not a valid float: {suggestion['score']}")
-                                continue
-
-                            # If all validation passes, add to valid suggestions
-                            valid_suggestions.append({
-                                "query": str(suggestion["query"]),
-                                "category": str(suggestion["category"]),
-                                "description": str(suggestion["description"]),
-                                "score": float(suggestion["score"]),
-                            })
-
-                        except Exception as e:
-                            logger.error(f"Error validating suggestion {i}: {e}")
-                            continue
-
-                    if valid_suggestions:
-                        return valid_suggestions
-
-                except (json.JSONDecodeError, KeyError, ValueError) as e:
-                    logger.error(f"Failed to process suggestions: {e}")
-                    logger.error(f"Content: {content}")
-
-            # Fallback suggestions
-            return [
-                {
-                    "query": query,
-                    "category": "original",
-                    "description": "Original search query",
-                    "score": 1.0,
-                },
-                {
-                    "query": f"{query} example",
-                    "category": "use_case",
-                    "description": "Example usage",
-                    "score": 0.9,
-                },
-            ]
+            return valid_suggestions
 
         except Exception as e:
-            logger.error(f"Query suggestion failed: {e}")
-            # Return minimal fallback
-            return [
-                {
-                    "query": str(query),
-                    "category": "original",
-                    "description": "Original search query",
-                    "score": 1.0,
-                }
-            ] 
+            logger.error(f"Failed to generate suggestions: {e}")
+            return []
+
+    def _create_business_prompt(self, query: str) -> str:
+        """Create business-focused prompt for query enhancement.
+
+        Args:
+            query: Original search query
+
+        Returns:
+            Business-focused prompt
+        """
+        return f"""Analyze this API search query from a business perspective: "{query}"
+
+Consider these aspects:
+1. What business goals might the user be trying to achieve?
+2. Which API endpoints would provide the most business value?
+3. What related functionality could increase adoption or revenue?
+4. How can we help the user implement revenue-generating features?
+
+For each suggestion, provide:
+- A clear business-focused query
+- A relevant category from: {list(BUSINESS_CATEGORIES.keys())}
+- A description of the business value
+- A confidence score (0-1)
+
+Format: List of JSON objects with fields:
+- query: string
+- category: string
+- description: string
+- score: float
+- value_proposition: string
+"""
+
+    def _estimate_complexity(self, query: str) -> str:
+        """Estimate implementation complexity."""
+        # Simple heuristic based on query complexity
+        words = query.lower().split()
+        if any(w in words for w in ["simple", "basic", "get"]):
+            return "Low"
+        elif any(w in words for w in ["integrate", "workflow", "process"]):
+            return "Medium"
+        else:
+            return "High"
+
+    def _estimate_time_to_value(self, category: str) -> str:
+        """Estimate time to realize business value."""
+        estimates = {
+            "quick_start": "1-2 days",
+            "revenue_generating": "1-2 weeks",
+            "cost_saving": "2-4 weeks",
+            "customer_experience": "1-3 weeks",
+            "integration": "2-4 weeks",
+            "analytics": "1-2 weeks",
+            "compliance": "2-4 weeks",
+            "optimization": "1-3 weeks"
+        }
+        return estimates.get(category, "2-4 weeks")
+
+    def _get_next_steps(self, category: str) -> List[str]:
+        """Get suggested next steps based on category."""
+        next_steps = {
+            "quick_start": [
+                "Review API documentation",
+                "Test endpoint with sample data",
+                "Implement basic error handling"
+            ],
+            "revenue_generating": [
+                "Analyze revenue potential",
+                "Plan integration with payment system",
+                "Set up monitoring for transactions"
+            ],
+            "cost_saving": [
+                "Identify current inefficiencies",
+                "Calculate potential savings",
+                "Plan gradual rollout"
+            ],
+            "customer_experience": [
+                "Define success metrics",
+                "Plan A/B testing",
+                "Set up user feedback collection"
+            ],
+            "integration": [
+                "Review system requirements",
+                "Plan data synchronization",
+                "Set up error handling"
+            ],
+            "analytics": [
+                "Define key metrics",
+                "Plan data collection",
+                "Set up dashboards"
+            ],
+            "compliance": [
+                "Review regulatory requirements",
+                "Plan audit trail",
+                "Set up compliance monitoring"
+            ],
+            "optimization": [
+                "Identify performance bottlenecks",
+                "Plan optimization strategy",
+                "Set up performance monitoring"
+            ]
+        }
+        return next_steps.get(category, []) 

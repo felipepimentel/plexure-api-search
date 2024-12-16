@@ -174,13 +174,13 @@ CRITICAL FORMATTING RULES:
 
             # Check for error in response
             if "error" in response:
-                logger.error(f"LLM provider returned error: {response['error']}")
+                logger.warning(f"LLM provider returned error: {response['error']}")
                 endpoint_data.update({"enriched": get_minimal_enrichment_structure()})
                 return endpoint_data
 
             # Check for missing choices
             if "choices" not in response or not response["choices"]:
-                logger.error("LLM response missing choices")
+                logger.warning("LLM response missing choices")
                 endpoint_data.update({"enriched": get_minimal_enrichment_structure()})
                 return endpoint_data
 
@@ -191,7 +191,7 @@ CRITICAL FORMATTING RULES:
 
                 # Clean and parse JSON
                 cleaned_content = clean_json_string(content)
-                logger.debug(f"Cleaned JSON content: {cleaned_content}")
+                logger.info(f"Enriched content: {json.dumps(cleaned_content, indent=2)}")
 
                 try:
                     # Parse JSON
@@ -215,28 +215,28 @@ CRITICAL FORMATTING RULES:
                     # Check each required field
                     missing_fields = [field for field in required_fields if field not in enriched_data]
                     if missing_fields:
-                        logger.error(f"Missing required fields in enriched data: {missing_fields}")
+                        logger.warning(f"Missing required fields in enriched data: {missing_fields}")
                         raise ValueError(f"Invalid enriched data structure - missing fields: {missing_fields}")
 
                     # Validate nested structures
                     if not isinstance(enriched_data["use_cases"], list) or not enriched_data["use_cases"]:
-                        logger.error("use_cases must be a non-empty array")
+                        logger.warning("use_cases must be a non-empty array")
                         raise ValueError("use_cases must be a non-empty array")
 
                     if not isinstance(enriched_data["best_practices"], list) or not enriched_data["best_practices"]:
-                        logger.error("best_practices must be a non-empty array")
+                        logger.warning("best_practices must be a non-empty array")
                         raise ValueError("best_practices must be a non-empty array")
 
                     if not isinstance(enriched_data["related_endpoints"], list) or not enriched_data["related_endpoints"]:
-                        logger.error("related_endpoints must be a non-empty array")
+                        logger.warning("related_endpoints must be a non-empty array")
                         raise ValueError("related_endpoints must be a non-empty array")
 
                     if not isinstance(enriched_data["parameters_description"], dict):
-                        logger.error("parameters_description must be an object")
+                        logger.warning("parameters_description must be an object")
                         raise ValueError("parameters_description must be an object")
 
                     if not isinstance(enriched_data["response_scenarios"], dict):
-                        logger.error("response_scenarios must be an object")
+                        logger.warning("response_scenarios must be an object")
                         raise ValueError("response_scenarios must be an object")
 
                     # Update endpoint data with validated enriched data
@@ -244,18 +244,18 @@ CRITICAL FORMATTING RULES:
                     logger.info(f"Successfully enriched endpoint {endpoint_data['method']} {endpoint_data['path']}")
 
                 except (json.JSONDecodeError, ValueError) as e:
-                    logger.error(f"Failed to parse or validate enriched data: {e}")
-                    logger.error(f"Raw content: {content}")
-                    logger.error(f"Cleaned content: {cleaned_content}")
+                    logger.warning(f"Failed to parse or validate enriched data: {e}")
+                    logger.debug(f"Raw content: {content}")
+                    logger.debug(f"Cleaned content: {cleaned_content}")
                     endpoint_data.update({"enriched": get_minimal_enrichment_structure()})
 
             except Exception as e:
-                logger.error(f"Failed to process enriched data: {e}")
+                logger.warning(f"Failed to process enriched data: {e}")
                 endpoint_data.update({"enriched": get_minimal_enrichment_structure()})
 
             return endpoint_data
 
         except Exception as e:
-            logger.error(f"Endpoint enrichment failed: {e}")
+            logger.warning(f"Endpoint enrichment failed: {e}")
             endpoint_data.update({"enriched": get_minimal_enrichment_structure()})
             return endpoint_data 

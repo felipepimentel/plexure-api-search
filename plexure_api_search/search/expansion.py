@@ -1,288 +1,305 @@
-"""Smart query expansion and semantic variant generation."""
+"""Advanced query expansion and enrichment system."""
 
+import logging
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
-import spacy
-from sentence_transformers import SentenceTransformer
+from nltk.corpus import wordnet
+from nltk.tokenize import word_tokenize
+from rank_bm25 import BM25Okapi
+
+from ..config import config_instance
+from ..embedding.embeddings import embeddings
+from ..integrations.llm.openrouter_client import OpenRouterClient
+from ..utils.cache import DiskCache
+
+logger = logging.getLogger(__name__)
+
+# Cache for expanded queries
+expansion_cache = DiskCache[Dict[str, Any]](
+    namespace="query_expansion",
+    ttl=config_instance.cache_ttl,
+)
 
 
 @dataclass
 class ExpandedQuery:
-    """Expanded query with variants and mappings."""
+    """Expanded query with metadata."""
 
     original_query: str
-    semantic_variants: List[str]
-    technical_mappings: List[str]
-    use_cases: List[str]
-    weights: Dict[str, float]
+    expanded_query: str
+    expansion_type: str
+    confidence: float
+    terms_added: List[str]
+    terms_removed: List[str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        return {
+            "original_query": self.original_query,
+            "expanded_query": self.expanded_query,
+            "expansion_type": self.expansion_type,
+            "confidence": self.confidence,
+            "terms_added": self.terms_added,
+            "terms_removed": self.terms_removed,
+        }
 
 
 class QueryExpander:
-    """Handles smart query expansion and variant generation."""
+    """Advanced query expansion and enrichment."""
 
-    def __init__(
-        self, model_name: str = "all-MiniLM-L6-v2", spacy_model: str = "en_core_web_sm"
-    ):
+    def __init__(self, use_cache: bool = True):
         """Initialize query expander.
 
         Args:
-            model_name: Name of the sentence transformer model.
-            spacy_model: Name of the spaCy model for NLP.
+            use_cache: Whether to use caching
         """
-        self.model = SentenceTransformer(model_name)
-        self.nlp = spacy.load(spacy_model)
+        self.use_cache = use_cache
+        self.llm = OpenRouterClient(use_cache=use_cache)
+        self.max_expansions = config_instance.max_query_expansions
+        self.api_corpus: List[str] = []
+        self.bm25: Optional[BM25Okapi] = None
 
-        # Technical term mappings
-        self.technical_mappings = {
-            "get": ["retrieve", "fetch", "read", "list", "query"],
-            "create": ["post", "add", "insert", "register", "new"],
-            "update": ["put", "modify", "change", "edit", "patch"],
-            "delete": ["remove", "destroy", "erase"],
-            "auth": ["authentication", "authorization", "login", "token"],
-            "user": ["account", "profile", "member", "client"],
-            "search": ["find", "query", "filter", "lookup"],
-            "list": ["all", "many", "multiple", "batch"],
-            "upload": ["send", "submit", "transfer", "push"],
-            "download": ["receive", "fetch", "pull", "get"],
+    def _get_wordnet_synonyms(self, term: str) -> Set[str]:
+        """Get WordNet synonyms for term.
+
+        Args:
+            term: Input term
+
+        Returns:
+            Set of synonyms
+        """
+        synonyms = set()
+        for syn in wordnet.synsets(term):
+            for lemma in syn.lemmas():
+                synonym = lemma.name().lower()
+                if synonym != term and "_" not in synonym:
+                    synonyms.add(synonym)
+        return synonyms
+
+    def _get_technical_terms(self, query: str) -> List[str]:
+        """Extract technical terms from query.
+
+        Args:
+            query: Input query
+
+        Returns:
+            List of technical terms
+        """
+        # Common API-related terms
+        api_terms = {
+            "get", "post", "put", "delete", "patch",
+            "api", "endpoint", "route", "path",
+            "auth", "token", "jwt", "oauth",
+            "json", "xml", "http", "https",
+            "request", "response", "header", "body",
+            "parameter", "query", "path", "form",
+            "status", "code", "error", "success",
         }
 
-        # Common use case patterns
-        self.use_case_patterns = {
-            "authentication": [
-                "login user",
-                "get authentication token",
-                "verify credentials",
-                "refresh token",
-            ],
-            "user_management": [
-                "create new user",
-                "update user profile",
-                "change password",
-                "delete account",
-            ],
-            "data_operations": [
-                "search records",
-                "filter results",
-                "sort items",
-                "paginate list",
-            ],
-            "file_operations": [
-                "upload file",
-                "download document",
-                "delete image",
-                "update attachment",
-            ],
-        }
+        # Extract terms that match API terminology
+        tokens = word_tokenize(query.lower())
+        return [term for term in tokens if term in api_terms]
 
-    def expand_query(self, query: str) -> ExpandedQuery:
-        """Expand a query with variants and mappings.
+    def _expand_with_llm(self, query: str) -> List[str]:
+        """Expand query using LLM.
 
         Args:
-            query: Original search query.
+            query: Input query
 
         Returns:
-            ExpandedQuery with variants and mappings.
+            List of expanded queries
         """
-        # Process query with spaCy
-        doc = self.nlp(query)
+        prompt = f"""Given this API search query: "{query}"
 
-        # Generate semantic variants
-        semantic_variants = self._generate_semantic_variants(doc)
+Suggest 3 alternative ways to express the same search intent, focusing on API terminology.
+Return a JSON array of strings.
 
-        # Generate technical mappings
-        technical_mappings = self._generate_technical_mappings(doc)
+Example:
+If the query is "user authentication", you might return:
+[
+    "login and token generation endpoints",
+    "oauth and jwt authentication apis",
+    "user authorization and identity verification"
+]"""
 
-        # Find relevant use cases
-        use_cases = self._find_relevant_use_cases(query)
+        try:
+            response = self.llm.call(
+                prompt=prompt,
+                temperature=0.3,
+                cache_key=f"expand_{query}",
+            )
 
-        # Calculate weights
-        weights = self._calculate_variant_weights(
-            query, semantic_variants, technical_mappings, use_cases
-        )
+            if "error" in response:
+                logger.error(f"LLM expansion failed: {response['error']}")
+                return []
 
-        return ExpandedQuery(
-            original_query=query,
-            semantic_variants=semantic_variants,
-            technical_mappings=technical_mappings,
-            use_cases=use_cases,
-            weights=weights,
-        )
+            content = response["choices"][0]["message"]["content"]
+            expansions = json.loads(content)
 
-    def _generate_semantic_variants(self, doc: spacy.tokens.Doc) -> List[str]:
-        """Generate semantic variants of the query.
+            if not isinstance(expansions, list):
+                logger.error("Invalid expansions format - not a list")
+                return []
+
+            return [str(exp) for exp in expansions]
+
+        except Exception as e:
+            logger.error(f"Failed to expand query with LLM: {e}")
+            return []
+
+    def _get_similar_queries(self, query: str) -> List[Tuple[str, float]]:
+        """Find similar historical queries.
 
         Args:
-            doc: spaCy Doc object of the query.
+            query: Input query
 
         Returns:
-            List of semantic variants.
+            List of (query, similarity) tuples
         """
-        variants = set()
+        try:
+            # Get query embedding
+            query_embedding = embeddings.get_embeddings(query)
 
-        # Add original tokens
-        base_tokens = [token.text.lower() for token in doc if not token.is_stop]
+            # Load historical queries
+            historical_queries = []
+            for file in expansion_cache.cache_dir.glob("*.json"):
+                try:
+                    data = json.loads(file.read_text())
+                    if "original_query" in data:
+                        historical_queries.append(data["original_query"])
+                except Exception:
+                    continue
 
-        # Add lemmatized versions
-        lemmas = [token.lemma_.lower() for token in doc if not token.is_stop]
+            if not historical_queries:
+                return []
 
-        # Add noun chunks
-        chunks = [chunk.text.lower() for chunk in doc.noun_chunks]
+            # Get embeddings for historical queries
+            historical_embeddings = embeddings.get_embeddings(historical_queries)
 
-        # Combine variations
-        for token in base_tokens:
-            # Add singular/plural forms
-            if token.endswith("s"):
-                variants.add(token[:-1])
-            else:
-                variants.add(token + "s")
+            # Calculate similarities
+            similarities = []
+            for hist_query, hist_emb in zip(historical_queries, historical_embeddings):
+                similarity = np.dot(query_embedding, hist_emb) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(hist_emb)
+                )
+                similarities.append((hist_query, float(similarity)))
 
-            # Add common prefixes
-            variants.add(f"get_{token}")
-            variants.add(f"find_{token}")
-            variants.add(f"search_{token}")
+            # Sort by similarity
+            return sorted(similarities, key=lambda x: x[1], reverse=True)
 
-        # Add all variations
-        variants.update(base_tokens)
-        variants.update(lemmas)
-        variants.update(chunks)
+        except Exception as e:
+            logger.error(f"Failed to get similar queries: {e}")
+            return []
 
-        return list(variants)
-
-    def _generate_technical_mappings(self, doc: spacy.tokens.Doc) -> List[str]:
-        """Generate technical mappings for the query.
-
-        Args:
-            doc: spaCy Doc object of the query.
-
-        Returns:
-            List of technical mappings.
-        """
-        mappings = set()
-
-        # Look up technical mappings for each token
-        for token in doc:
-            word = token.text.lower()
-            if word in self.technical_mappings:
-                mappings.update(self.technical_mappings[word])
-
-        # Generate compound mappings
-        for chunk in doc.noun_chunks:
-            # Add REST-style paths
-            path = chunk.text.lower().replace(" ", "-")
-            mappings.add(f"GET /{path}")
-            mappings.add(f"POST /{path}")
-            mappings.add(f"PUT /{path}")
-            mappings.add(f"DELETE /{path}")
-
-            # Add camelCase variations
-            camel_case = "".join(word.capitalize() for word in chunk.text.split())
-            mappings.add(camel_case)
-
-        return list(mappings)
-
-    def _find_relevant_use_cases(self, query: str) -> List[str]:
-        """Find relevant use cases for the query.
-
-        Args:
-            query: Original search query.
-
-        Returns:
-            List of relevant use cases.
-        """
-        query_embedding = self.model.encode(query)
-
-        relevant_cases = []
-        for category, patterns in self.use_case_patterns.items():
-            # Calculate similarity with each pattern
-            for pattern in patterns:
-                pattern_embedding = self.model.encode(pattern)
-                similarity = np.dot(query_embedding, pattern_embedding)
-
-                if similarity > 0.7:  # Similarity threshold
-                    relevant_cases.append(pattern)
-
-        return relevant_cases
-
-    def _calculate_variant_weights(
+    def _filter_expansions(
         self,
         original_query: str,
-        semantic_variants: List[str],
-        technical_mappings: List[str],
-        use_cases: List[str],
-    ) -> Dict[str, float]:
-        """Calculate weights for each query variant.
+        expansions: List[str],
+    ) -> List[ExpandedQuery]:
+        """Filter and validate expanded queries.
 
         Args:
-            original_query: Original search query.
-            semantic_variants: List of semantic variants.
-            technical_mappings: List of technical mappings.
-            use_cases: List of relevant use cases.
+            original_query: Original query
+            expansions: List of expanded queries
 
         Returns:
-            Dictionary of variant weights.
+            List of validated expanded queries
         """
-        weights = {}
-        query_embedding = self.model.encode(original_query)
+        filtered = []
+        original_tokens = set(word_tokenize(original_query.lower()))
 
-        # Calculate weights for semantic variants
-        for variant in semantic_variants:
-            variant_embedding = self.model.encode(variant)
-            similarity = float(np.dot(query_embedding, variant_embedding))
-            weights[variant] = similarity
+        for expansion in expansions:
+            try:
+                # Tokenize expansion
+                expansion_tokens = set(word_tokenize(expansion.lower()))
 
-        # Calculate weights for technical mappings
-        for mapping in technical_mappings:
-            mapping_embedding = self.model.encode(mapping)
-            similarity = float(np.dot(query_embedding, mapping_embedding))
-            weights[mapping] = (
-                similarity * 0.8
-            )  # Slightly lower weight for technical mappings
+                # Calculate changes
+                added = expansion_tokens - original_tokens
+                removed = original_tokens - expansion_tokens
 
-        # Calculate weights for use cases
-        for use_case in use_cases:
-            use_case_embedding = self.model.encode(use_case)
-            similarity = float(np.dot(query_embedding, use_case_embedding))
-            weights[use_case] = similarity * 0.6  # Lower weight for use cases
+                # Calculate confidence based on token overlap
+                overlap = len(original_tokens & expansion_tokens)
+                total = len(original_tokens | expansion_tokens)
+                confidence = overlap / total if total > 0 else 0.0
 
-        # Normalize weights
-        total_weight = sum(weights.values())
-        if total_weight > 0:
-            weights = {k: v / total_weight for k, v in weights.items()}
+                # Create expanded query object
+                expanded = ExpandedQuery(
+                    original_query=original_query,
+                    expanded_query=expansion,
+                    expansion_type="semantic",
+                    confidence=confidence,
+                    terms_added=list(added),
+                    terms_removed=list(removed),
+                )
 
-        return weights
+                filtered.append(expanded)
 
-    def get_expanded_terms(
-        self, query: str, min_weight: float = 0.1
-    ) -> List[Tuple[str, float]]:
-        """Get expanded search terms with weights.
+            except Exception as e:
+                logger.error(f"Failed to filter expansion: {e}")
+                continue
+
+        return filtered
+
+    def expand_query(self, query: str) -> List[ExpandedQuery]:
+        """Expand search query using multiple strategies.
 
         Args:
-            query: Original search query.
-            min_weight: Minimum weight threshold.
+            query: Search query
 
         Returns:
-            List of (term, weight) tuples.
+            List of expanded queries
         """
-        expanded = self.expand_query(query)
+        try:
+            # Check cache
+            if self.use_cache:
+                cache_key = f"expand:{query}"
+                cached = expansion_cache.get(cache_key)
+                if cached is not None:
+                    return [ExpandedQuery(**exp) for exp in cached]
 
-        # Combine all terms with weights
-        terms = []
-        for variant in expanded.semantic_variants:
-            weight = expanded.weights.get(variant, 0.0)
-            if weight >= min_weight:
-                terms.append((variant, weight))
+            expansions = []
 
-        for mapping in expanded.technical_mappings:
-            weight = expanded.weights.get(mapping, 0.0)
-            if weight >= min_weight:
-                terms.append((mapping, weight))
+            # 1. LLM-based expansion
+            llm_expansions = self._expand_with_llm(query)
+            if llm_expansions:
+                expansions.extend(llm_expansions)
 
-        for use_case in expanded.use_cases:
-            weight = expanded.weights.get(use_case, 0.0)
-            if weight >= min_weight:
-                terms.append((use_case, weight))
+            # 2. Technical term expansion
+            tech_terms = self._get_technical_terms(query)
+            for term in tech_terms:
+                synonyms = self._get_wordnet_synonyms(term)
+                for synonym in synonyms:
+                    expanded = query.replace(term, synonym)
+                    expansions.append(expanded)
 
-        # Sort by weight descending
-        return sorted(terms, key=lambda x: x[1], reverse=True)
+            # 3. Similar historical queries
+            similar_queries = self._get_similar_queries(query)
+            for similar_query, _ in similar_queries[:self.max_expansions]:
+                expansions.append(similar_query)
+
+            # Filter and validate expansions
+            filtered = self._filter_expansions(query, expansions)
+
+            # Sort by confidence and limit
+            filtered.sort(key=lambda x: x.confidence, reverse=True)
+            filtered = filtered[:self.max_expansions]
+
+            # Cache results
+            if self.use_cache:
+                expansion_cache.set(
+                    cache_key,
+                    [exp.to_dict() for exp in filtered],
+                )
+
+            return filtered
+
+        except Exception as e:
+            logger.error(f"Query expansion failed: {e}")
+            return []
+
+
+# Global query expander instance
+query_expander = QueryExpander()
+
+__all__ = ["query_expander", "ExpandedQuery"]

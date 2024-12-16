@@ -410,7 +410,11 @@ class APIIndexer:
                                 )
 
                             # Create vector representation
-                            vector = self.vectorizer.vectorize(endpoint)
+                            vector = self.vectorizer.vectorize(
+                                endpoint=endpoint["path"],
+                                description=endpoint["description"] or endpoint["summary"] or "",
+                                example=None  # Optional example parameter
+                            )
                             combined_vector = vector.to_combined_vector()
 
                             # Check if exists and force flag

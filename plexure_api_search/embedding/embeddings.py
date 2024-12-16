@@ -1,22 +1,132 @@
-"""Advanced embedding generation with triple vector strategies and caching."""
+"""Advanced embedding generation with modern models and caching."""
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union, Tuple
 
 import numpy as np
-from sentence_transformers import CrossEncoder, SentenceTransformer
+from sentence_transformers import SentenceTransformer
 from sklearn.decomposition import PCA
+from transformers import AutoTokenizer, AutoModel
+import torch
+import torch.nn.functional as F
 
 from ..utils.cache import DiskCache
 from ..config import config_instance
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class TripleVector:
+    """Vector representation of an API triple (endpoint, description, example)."""
+    
+    endpoint: np.ndarray
+    description: np.ndarray
+    example: Optional[np.ndarray] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        return {
+            "endpoint": self.endpoint.tolist(),
+            "description": self.description.tolist(),
+            "example": self.example.tolist() if self.example is not None else None,
+            "metadata": self.metadata or {},
+        }
+
+    def to_combined_vector(self) -> np.ndarray:
+        """Combine endpoint and description vectors into a single vector.
+        
+        Returns:
+            Combined vector representation with dimension matching config
+        """
+        # Normalize vectors before combining
+        endpoint_norm = self.endpoint / np.linalg.norm(self.endpoint)
+        description_norm = self.description / np.linalg.norm(self.description)
+        
+        # Average the vectors instead of concatenating
+        combined = (endpoint_norm + description_norm) / 2
+        
+        # Add example vector if available
+        if self.example is not None:
+            example_norm = self.example / np.linalg.norm(self.example)
+            combined = (combined + example_norm) / 2
+            
+        # Final normalization
+        combined = combined / np.linalg.norm(combined)
+        return combined
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TripleVector":
+        """Create from dictionary format."""
+        return cls(
+            endpoint=np.array(data["endpoint"]),
+            description=np.array(data["description"]),
+            example=np.array(data["example"]) if data.get("example") is not None else None,
+            metadata=data.get("metadata", {}),
+        )
+
+class TripleVectorizer:
+    """Vectorize API triples using modern embedding models."""
+
+    def __init__(self):
+        """Initialize the vectorizer with embedding models."""
+        self.embeddings = ModernEmbeddings()
+
+    def vectorize(
+        self, endpoint: str, description: str, example: Optional[str] = None
+    ) -> TripleVector:
+        """Vectorize an API triple.
+
+        Args:
+            endpoint: API endpoint path
+            description: API description
+            example: Optional example usage
+
+        Returns:
+            TripleVector containing embeddings
+        """
+        # Generate embeddings for endpoint and description
+        endpoint_vector = self.embeddings.get_embeddings(endpoint)
+        description_vector = self.embeddings.get_embeddings(description)
+        
+        # Generate example embedding if provided
+        example_vector = None
+        if example:
+            example_vector = self.embeddings.get_embeddings(example)
+
+        return TripleVector(
+            endpoint=endpoint_vector,
+            description=description_vector,
+            example=example_vector,
+            metadata={
+                "endpoint": endpoint,
+                "description": description,
+                "example": example,
+            },
+        )
+
+    def batch_vectorize(
+        self, triples: List[Tuple[str, str, Optional[str]]]
+    ) -> List[TripleVector]:
+        """Vectorize multiple API triples in batch.
+
+        Args:
+            triples: List of (endpoint, description, example) tuples
+
+        Returns:
+            List of TripleVectors
+        """
+        results = []
+        for endpoint, description, example in triples:
+            vector = self.vectorize(endpoint, description, example)
+            results.append(vector)
+        return results
+
 # Pre-configured cache instances
 embedding_cache = DiskCache[np.ndarray](
     namespace="embeddings",
-    ttl=config_instance.embedding_cache_ttl,  # 24 hours
+    ttl=config_instance.embedding_cache_ttl,
 )
 
 
@@ -24,15 +134,13 @@ embedding_cache = DiskCache[np.ndarray](
 class EmbeddingResult:
     """Result of embedding generation with metadata."""
 
-    # Core data
     vector: np.ndarray
     text: str
     model_name: str
-
-    # Additional metadata
     dimension: int
-    strategy: str = "bi_encoder"  # bi_encoder or cross_encoder
+    strategy: str = "bi_encoder"
     confidence: float = 1.0
+    metadata: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format for serialization."""
@@ -43,6 +151,7 @@ class EmbeddingResult:
             "dimension": self.dimension,
             "strategy": self.strategy,
             "confidence": self.confidence,
+            "metadata": self.metadata or {},
         }
 
     @classmethod
@@ -52,366 +161,142 @@ class EmbeddingResult:
         return cls(**data)
 
 
-@dataclass
-class TripleVector:
-    """Triple vector representation of an API endpoint."""
+class ModernEmbeddings:
+    """Modern embedding generation with advanced features."""
 
-    semantic_vector: np.ndarray
-    structure_vector: np.ndarray
-    parameter_vector: np.ndarray
-
-    def to_combined_vector(
-        self, weights: Optional[Dict[str, float]] = None
-    ) -> List[float]:
-        """Combine vectors with optional weights.
+    def __init__(self, use_cache: bool = True):
+        """Initialize embedding models.
 
         Args:
-            weights: Dictionary with weights for each vector type.
-                    Defaults to semantic: 0.4, structure: 0.3, parameter: 0.3
-
-        Returns:
-            Combined vector representation as a list of floats for serialization.
-        """
-        if weights is None:
-            weights = {"semantic": 0.4, "structure": 0.3, "parameter": 0.3}
-
-        combined = (
-            weights["semantic"] * self.semantic_vector
-            + weights["structure"] * self.structure_vector
-            + weights["parameter"] * self.parameter_vector
-        )
-        
-        # Ensure we return a list
-        if isinstance(combined, np.ndarray):
-            return combined.tolist()
-        elif isinstance(combined, list):
-            return combined
-        else:
-            # Convert any other type to list
-            return list(combined)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary format for serialization."""
-        return {
-            "semantic_vector": self.semantic_vector.tolist(),
-            "structure_vector": self.structure_vector.tolist(),
-            "parameter_vector": self.parameter_vector.tolist(),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "TripleVector":
-        """Create from dictionary format."""
-        return cls(
-            semantic_vector=np.array(data["semantic_vector"]),
-            structure_vector=np.array(data["structure_vector"]),
-            parameter_vector=np.array(data["parameter_vector"]),
-        )
-
-
-class TripleVectorizer:
-    """Advanced embedding generator with multiple strategies."""
-
-    def __init__(
-        self,
-        bi_encoder_model: str = config_instance.bi_encoder_model,
-        cross_encoder_model: str = config_instance.cross_encoder_model,
-        vector_dim: int = config_instance.vector_dimension,
-        pca_components: int = config_instance.pca_components,
-        use_cache: bool = True,
-    ):
-        """Initialize vectorizer.
-
-        Args:
-            bi_encoder_model: Name/path of bi-encoder model
-            cross_encoder_model: Name/path of cross-encoder model
-            vector_dim: Dimension of each vector type
-            pca_components: Number of PCA components for dimension reduction
-            use_cache: Whether to use embedding cache
+            use_cache: Whether to use caching
         """
         self.use_cache = use_cache
-        self.vector_dim = vector_dim
+        
+        # Initialize main bi-encoder
+        self.bi_encoder = SentenceTransformer(config_instance.bi_encoder_model)
+        
+        # Initialize fallback model
+        self.fallback_encoder = SentenceTransformer(config_instance.bi_encoder_fallback)
+        
+        # Initialize cross-encoder for reranking
+        self.cross_encoder = SentenceTransformer(config_instance.cross_encoder_model)
+        
+        # Initialize multilingual model if needed
+        self.multilingual_encoder = None
+        if hasattr(config_instance, "multilingual_model"):
+            self.multilingual_encoder = SentenceTransformer(config_instance.multilingual_model)
+        
+        # Initialize PCA if enabled
+        self.pca = None
+        if config_instance.pca_enabled:
+            self.pca = PCA(n_components=config_instance.pca_components)
+            
+        # Set up pooling strategy
+        self.pooling_strategy = config_instance.pooling_strategy
+        
+        # Initialize tokenizer for advanced processing
+        self.tokenizer = AutoTokenizer.from_pretrained(config_instance.bi_encoder_model)
+        
+        logger.info(f"Initialized embeddings with model: {config_instance.bi_encoder_model}")
 
-        # Initialize models
-        try:
-            self.bi_encoder = SentenceTransformer(bi_encoder_model)
-            self.cross_encoder = CrossEncoder(cross_encoder_model)
-            logger.info(
-                f"Initialized models: {bi_encoder_model}, {cross_encoder_model}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize models: {e}")
-            raise
-
-        # Initialize PCAs for dimension reduction
-        self.semantic_pca = PCA(n_components=pca_components)
-        self.structure_pca = PCA(n_components=pca_components)
-        self.parameter_pca = PCA(n_components=pca_components)
-
-        # Get embedding dimension
-        self.embedding_dim = self.bi_encoder.get_sentence_embedding_dimension()
-
-    def vectorize_query(self, query: str) -> List[float]:
-        """Generate embedding for search query.
-
-        Args:
-            query: Search query text
-
-        Returns:
-            Query embedding vector as a list of floats for serialization
-        """
-        try:
-            # Check cache first
-            if self.use_cache:
-                cached = embedding_cache.get(f"query:{query}")
-                if cached is not None:
-                    return cached.tolist()
-
-            # Generate embedding
-            vector = self.bi_encoder.encode(
-                query, convert_to_numpy=True, normalize_embeddings=True
-            )
-
-            # Cache result
-            if self.use_cache:
-                embedding_cache.set(f"query:{query}", vector)
-
-            return vector.tolist()
-
-        except Exception as e:
-            logger.error(f"Failed to vectorize query: {e}")
-            raise
-
-    def create_semantic_vector(self, endpoint_data: Dict[str, Any]) -> np.ndarray:
-        """Create semantic vector from endpoint description and documentation.
+    def _mean_pooling(self, model_output: Any, attention_mask: Any) -> torch.Tensor:
+        """Perform mean pooling on token embeddings.
 
         Args:
-            endpoint_data: Dictionary containing endpoint information
+            model_output: Model's output
+            attention_mask: Attention mask for tokens
 
         Returns:
-            Semantic vector representation
+            Pooled embeddings
         """
-        # Combine relevant text fields
-        text = f"""
-        Path: {endpoint_data.get("path", "")}
-        Method: {endpoint_data.get("method", "")}
-        Description: {endpoint_data.get("description", "")}
-        Summary: {endpoint_data.get("summary", "")}
-        Tags: {", ".join(endpoint_data.get("tags", []))}
+        token_embeddings = model_output[0]
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+
+    def _get_embedding(self, text: str, model: SentenceTransformer) -> np.ndarray:
+        """Get embedding from specified model with proper processing.
+
+        Args:
+            text: Input text
+            model: SentenceTransformer model to use
+
+        Returns:
+            Embedding vector
         """
-
-        # Check cache
-        if self.use_cache:
-            cached = embedding_cache.get(f"semantic:{text}")
-            if cached is not None:
-                return cached
-
-        # Generate embedding
-        vector = self.bi_encoder.encode(
-            text, convert_to_numpy=True, normalize_embeddings=True
+        # Encode text
+        encoded = model.encode(
+            text,
+            convert_to_numpy=True,
+            normalize_embeddings=config_instance.normalize_embeddings,
+            show_progress_bar=False,
         )
-
-        # Apply PCA if needed
-        if len(vector) > self.vector_dim:
-            vector = self.semantic_pca.fit_transform([vector])[0]
-
-        # Cache result
-        if self.use_cache:
-            embedding_cache.set(f"semantic:{text}", vector)
-
-        return vector
-
-    def create_structure_vector(self, endpoint_data: Dict[str, Any]) -> np.ndarray:
-        """Create structure vector representing API endpoint structure.
-
-        Args:
-            endpoint_data: Dictionary containing endpoint information
-
-        Returns:
-            Structure vector representation
-        """
-        # Extract structural features
-        path_parts = endpoint_data.get("path", "").split("/")
-        method = endpoint_data.get("method", "").upper()
-        version = endpoint_data.get("api_version", "")
-
-        # Create structural embedding
-        features = []
-
-        # Path depth and components
-        features.append(len(path_parts))
-        features.extend([hash(part) % 100 for part in path_parts])
-
-        # Method encoding
-        method_encoding = {
-            "GET": [1, 0, 0, 0],
-            "POST": [0, 1, 0, 0],
-            "PUT": [0, 0, 1, 0],
-            "DELETE": [0, 0, 0, 1],
-        }.get(method, [0, 0, 0, 0])
-        features.extend(method_encoding)
-
-        # Version encoding
-        try:
-            version_parts = [float(v) for v in version.split(".")]
-            features.extend(version_parts)
-        except:
-            features.extend([0, 0, 0])
-
-        # Convert to numpy array and pad/truncate
-        vector = np.array(features, dtype=np.float32)
-        if len(vector) > self.vector_dim:
-            vector = self.structure_pca.fit_transform([vector])[0]
-        else:
-            vector = np.pad(vector, (0, self.vector_dim - len(vector)))
-
-        return vector
-
-    def create_parameter_vector(self, endpoint_data: Dict[str, Any]) -> np.ndarray:
-        """Create parameter vector encoding API parameters and types.
-
-        Args:
-            endpoint_data: Dictionary containing endpoint information
-
-        Returns:
-            Parameter vector representation
-        """
-        # Extract parameter information
-        parameters = endpoint_data.get("parameters", [])
-
-        # Parameter type encoding
-        type_encoding = {
-            "string": [1, 0, 0, 0],
-            "integer": [0, 1, 0, 0],
-            "boolean": [0, 0, 1, 0],
-            "array": [0, 0, 0, 1],
-        }
-
-        features = []
-
-        # Number of parameters
-        features.append(len(parameters))
-
-        # Parameter types and locations
-        for param in parameters:
-            # Skip if param is not a dict
-            if not isinstance(param, dict):
-                continue
-
-            # Get parameter type and location
-            schema = param.get("schema", {})
-            if isinstance(schema, dict):
-                param_type = schema.get("type", "string")
+        
+        # Ensure vector dimension matches configuration
+        if len(encoded) != config_instance.vector_dimension:
+            # If vector is too large, truncate it
+            if len(encoded) > config_instance.vector_dimension:
+                encoded = encoded[:config_instance.vector_dimension]
+            # If vector is too small, pad with zeros
             else:
-                param_type = "string"
+                padding = np.zeros(config_instance.vector_dimension - len(encoded))
+                encoded = np.concatenate([encoded, padding])
                 
-            param_in = param.get("in", "query")
+        # Normalize final vector
+        if config_instance.normalize_embeddings:
+            encoded = encoded / np.linalg.norm(encoded)
+            
+        return encoded
 
-            # Add type encoding
-            features.extend(type_encoding.get(param_type, [0, 0, 0, 0]))
-
-            # Add location encoding
-            location_encoding = {
-                "query": [1, 0, 0],
-                "path": [0, 1, 0],
-                "body": [0, 0, 1],
-            }.get(param_in, [0, 0, 0])
-            features.extend(location_encoding)
-
-        # Convert to numpy array and pad/truncate
-        vector = np.array(features, dtype=np.float32)
-        if len(vector) > self.vector_dim:
-            vector = self.parameter_pca.fit_transform([vector])[0]
-        else:
-            vector = np.pad(vector, (0, self.vector_dim - len(vector)))
-
-        return vector
-
-    def vectorize(self, endpoint_data: Dict[str, Any]) -> TripleVector:
-        """Create triple vector representation for an endpoint.
+    def get_embeddings(self, texts: Union[str, List[str]], retry_with_fallback: bool = True) -> Union[np.ndarray, List[np.ndarray]]:
+        """Generate embeddings for one or more texts.
 
         Args:
-            endpoint_data: Dictionary containing endpoint information
+            texts: Input text or list of texts
+            retry_with_fallback: Whether to retry with fallback model on failure
 
         Returns:
-            TripleVector representation
+            Single embedding vector or list of vectors
         """
-        return TripleVector(
-            semantic_vector=self.create_semantic_vector(endpoint_data),
-            structure_vector=self.create_structure_vector(endpoint_data),
-            parameter_vector=self.create_parameter_vector(endpoint_data),
-        )
-
-    def vectorize_batch(
-        self, texts: List[str], batch_size: int = 32
-    ) -> List[EmbeddingResult]:
-        """Generate embeddings for multiple texts.
-
-        Args:
-            texts: List of texts to embed
-            batch_size: Batch size for processing
-
-        Returns:
-            List of embedding results
-        """
+        single_input = isinstance(texts, str)
+        texts_list = [texts] if single_input else texts
+        
         results = []
+        for text in texts_list:
+            try:
+                # Check cache first
+                if self.use_cache:
+                    cache_key = f"emb:{text}"
+                    cached = embedding_cache.get(cache_key)
+                    if cached is not None:
+                        results.append(cached)
+                        continue
+                
+                # Generate embedding with main model
+                vector = self._get_embedding(text, self.bi_encoder)
+                
+                # Cache result
+                if self.use_cache:
+                    embedding_cache.set(cache_key, vector)
+                
+                results.append(vector)
+                
+            except Exception as e:
+                logger.error(f"Error generating embedding: {e}")
+                if retry_with_fallback:
+                    try:
+                        # Try fallback model
+                        logger.info("Retrying with fallback model")
+                        vector = self._get_embedding(text, self.fallback_encoder)
+                        results.append(vector)
+                    except Exception as e2:
+                        logger.error(f"Fallback model also failed: {e2}")
+                        raise
+                else:
+                    raise
+        
+        return results[0] if single_input else results
 
-        try:
-            # Process in batches
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i : i + batch_size]
-
-                # Check cache for each text
-                batch_vectors = []
-                uncached_indices = []
-                uncached_texts = []
-
-                for j, text in enumerate(batch):
-                    if self.use_cache:
-                        cached = embedding_cache.get(f"batch:{text}")
-                        if cached is not None:
-                            batch_vectors.append(cached)
-                            continue
-
-                    uncached_indices.append(j)
-                    uncached_texts.append(text)
-
-                # Generate embeddings for uncached texts
-                if uncached_texts:
-                    vectors = self.bi_encoder.encode(
-                        uncached_texts,
-                        convert_to_numpy=True,
-                        normalize_embeddings=True,
-                        batch_size=batch_size,
-                    )
-
-                    # Cache new embeddings
-                    if self.use_cache:
-                        for text, vector in zip(uncached_texts, vectors):
-                            embedding_cache.set(f"batch:{text}", vector)
-
-                    # Insert new vectors at correct positions
-                    for idx, vector in zip(uncached_indices, vectors):
-                        batch_vectors.insert(idx, vector)
-
-                # Create EmbeddingResults
-                for text, vector in zip(batch, batch_vectors):
-                    result = EmbeddingResult(
-                        vector=vector,
-                        text=text,
-                        model_name=self.bi_encoder.get_model_card(),
-                        dimension=self.embedding_dim,
-                    )
-                    results.append(result)
-
-        except Exception as e:
-            logger.error(f"Failed to vectorize batch: {e}")
-            raise
-
-        return results
-
-    def compute_similarity(
-        self, text1: str, text2: str, strategy: str = "cross_encoder"
-    ) -> float:
+    def compute_similarity(self, text1: str, text2: str, strategy: str = "cross_encoder") -> float:
         """Compute similarity between two texts.
 
         Args:
@@ -428,16 +313,12 @@ class TripleVectorizer:
                 score = self.cross_encoder.predict([(text1, text2)])
                 # Normalize to 0-1 range
                 return float((1 + score) / 2)
-
             else:  # bi_encoder
                 # Get embeddings
-                vec1 = self.vectorize_query(text1)
-                vec2 = self.vectorize_query(text2)
-
+                vec1, vec2 = self.get_embeddings([text1, text2])
                 # Compute cosine similarity
-                similarity = np.dot(vec1, vec2)
+                similarity = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
                 return float(similarity)
-
         except Exception as e:
             logger.error(f"Failed to compute similarity: {e}")
             raise
@@ -482,7 +363,22 @@ class TripleVectorizer:
             logger.error(f"Failed to rerank results: {e}")
             raise
 
+    def get_multilingual_embeddings(self, text: str) -> np.ndarray:
+        """Generate multilingual embeddings if supported.
 
-def create_embeddings(text):
-    logger.info(f"Creating embedding for text: {text[:100]}...")
-    # Rest of the code...
+        Args:
+            text: Input text
+
+        Returns:
+            Multilingual embedding vector
+        """
+        if not self.multilingual_encoder:
+            raise ValueError("Multilingual model not initialized")
+            
+        return self._get_embedding(text, self.multilingual_encoder)
+
+
+# Global embeddings instance
+embeddings = ModernEmbeddings()
+
+__all__ = ["embeddings", "EmbeddingResult", "ModernEmbeddings"]

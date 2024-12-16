@@ -27,6 +27,15 @@ class SearchEvaluation:
     recall: float
     latency_ms: float
     timestamp: datetime
+    # Business metrics
+    time_to_first_success: Optional[float] = None  # Time until user finds first relevant result
+    session_duration: Optional[float] = None  # Total session duration
+    click_through_rate: Optional[float] = None  # Ratio of clicked results
+    conversion_rate: Optional[float] = None  # Ratio of queries leading to API usage
+    user_satisfaction: Optional[float] = None  # User satisfaction score (0-1)
+    api_adoption_rate: Optional[float] = None  # Rate of API adoption after search
+    endpoint_coverage: Optional[float] = None  # Coverage of searched endpoints
+    business_value_score: Optional[float] = None  # Composite business value score
 
 
 @dataclass
@@ -158,6 +167,47 @@ class QualityMetrics:
             return 0.0
 
         return sum(1 for r in results if r.is_relevant) / total_relevant
+
+    def calculate_business_value(
+        self,
+        results: List[SearchResult],
+        user_metrics: Dict[str, float],
+    ) -> float:
+        """Calculate business value score for search results.
+
+        Args:
+            results: List of search results
+            user_metrics: Dictionary of user interaction metrics
+
+        Returns:
+            Business value score between 0 and 1
+        """
+        # Weight factors for different components
+        weights = {
+            "api_adoption": 0.3,
+            "user_satisfaction": 0.2,
+            "endpoint_coverage": 0.2,
+            "conversion": 0.2,
+            "performance": 0.1
+        }
+
+        # Calculate component scores
+        api_adoption = user_metrics.get("api_adoption_rate", 0.0)
+        user_satisfaction = user_metrics.get("user_satisfaction", 0.0)
+        endpoint_coverage = len(set(r.endpoint_id for r in results)) / self.total_endpoints
+        conversion = user_metrics.get("conversion_rate", 0.0)
+        performance = 1.0 - min(user_metrics.get("latency_ms", 0.0) / 1000.0, 1.0)
+
+        # Calculate weighted score
+        business_value = (
+            weights["api_adoption"] * api_adoption +
+            weights["user_satisfaction"] * user_satisfaction +
+            weights["endpoint_coverage"] * endpoint_coverage +
+            weights["conversion"] * conversion +
+            weights["performance"] * performance
+        )
+
+        return min(max(business_value, 0.0), 1.0)
 
     def evaluate_search(
         self,
@@ -294,3 +344,50 @@ class QualityMetrics:
                     trends[metric].append(None)
 
         return trends
+
+    def get_business_metrics(
+        self,
+        window: timedelta = timedelta(days=30)
+    ) -> Dict[str, float]:
+        """Get business-focused metrics over a time window.
+
+        Args:
+            window: Time window for analysis
+
+        Returns:
+            Dictionary of business metrics
+        """
+        cutoff = datetime.now() - window
+        recent_evals = [eval for eval in self.evaluations if eval.timestamp > cutoff]
+
+        if not recent_evals:
+            return {
+                "avg_time_to_success": 0.0,
+                "avg_session_duration": 0.0,
+                "avg_click_through_rate": 0.0,
+                "avg_conversion_rate": 0.0,
+                "avg_user_satisfaction": 0.0,
+                "avg_api_adoption_rate": 0.0,
+                "avg_endpoint_coverage": 0.0,
+                "avg_business_value": 0.0,
+                "roi_score": 0.0,
+            }
+
+        metrics = {
+            "avg_time_to_success": np.mean([e.time_to_first_success for e in recent_evals if e.time_to_first_success is not None]),
+            "avg_session_duration": np.mean([e.session_duration for e in recent_evals if e.session_duration is not None]),
+            "avg_click_through_rate": np.mean([e.click_through_rate for e in recent_evals if e.click_through_rate is not None]),
+            "avg_conversion_rate": np.mean([e.conversion_rate for e in recent_evals if e.conversion_rate is not None]),
+            "avg_user_satisfaction": np.mean([e.user_satisfaction for e in recent_evals if e.user_satisfaction is not None]),
+            "avg_api_adoption_rate": np.mean([e.api_adoption_rate for e in recent_evals if e.api_adoption_rate is not None]),
+            "avg_endpoint_coverage": np.mean([e.endpoint_coverage for e in recent_evals if e.endpoint_coverage is not None]),
+            "avg_business_value": np.mean([e.business_value_score for e in recent_evals if e.business_value_score is not None]),
+        }
+
+        # Calculate ROI score based on conversion and adoption metrics
+        metrics["roi_score"] = (
+            metrics["avg_conversion_rate"] * 0.6 +
+            metrics["avg_api_adoption_rate"] * 0.4
+        )
+
+        return metrics

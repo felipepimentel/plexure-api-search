@@ -3,12 +3,55 @@
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from dataclasses import dataclass
+from enum import Enum
 
 import numpy as np
 
 from ..config import config_instance
 from .search_models import SearchContext, WeightProfile
+from ..monitoring import metrics_manager
+
+
+class BusinessValue(Enum):
+    """Business value categories for API endpoints."""
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+@dataclass
+class BusinessContext:
+    """Business context for API endpoints."""
+
+    value: BusinessValue
+    category: str
+    usage_frequency: float
+    last_accessed: Optional[datetime] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        return {
+            "value": self.value.value,
+            "category": self.category,
+            "usage_frequency": self.usage_frequency,
+            "last_accessed": self.last_accessed.isoformat() if self.last_accessed else None,
+            "metadata": self.metadata or {},
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "BusinessContext":
+        """Create from dictionary format."""
+        return cls(
+            value=BusinessValue(data["value"]),
+            category=data["category"],
+            usage_frequency=data["usage_frequency"],
+            last_accessed=datetime.fromisoformat(data["last_accessed"]) if data.get("last_accessed") else None,
+            metadata=data.get("metadata", {}),
+        )
 
 
 class ContextualBooster:

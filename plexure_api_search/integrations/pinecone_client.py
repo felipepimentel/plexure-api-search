@@ -4,7 +4,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from pinecone import Pinecone, ServerlessSpec
+from pinecone import Pinecone
 
 from ..config import config_instance
 
@@ -35,7 +35,7 @@ class PineconeClient:
                     name=self.index_name,
                     dimension=self.dimension,
                     metric="cosine",  # Use cosine similarity by default
-                    spec=ServerlessSpec(cloud=self.cloud, region=self.region),
+                    pod_type="p1.x1"  # Use pod-based index
                 )
                 time.sleep(2)  # Wait for index creation
 
