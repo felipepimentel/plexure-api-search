@@ -129,3 +129,110 @@ class OpenRouterClient(LLMProvider):
                     }
                 ]
             }
+
+    def suggest_related_queries(self, query: str) -> list:
+        """Suggest related search queries using LLM.
+
+        Args:
+            query: Original search query
+
+        Returns:
+            List of related query suggestions
+        """
+        try:
+            prompt = f"""Given this API search query: "{query}"
+
+Suggest 3 related search queries that users might also be interested in.
+Return a JSON array of objects with these exact fields:
+- query: The suggested search query
+- category: Category of the suggestion (e.g. "similar", "broader", "narrower")
+- description: Why this query might be relevant
+- score: Relevance score from 0 to 1
+
+Example response:
+[
+    {{"query": "example query", "category": "similar", "description": "why relevant", "score": 0.9}}
+]"""
+
+            response = self.call(
+                prompt=prompt,
+                temperature=0.3,
+                cache_key=f"related_queries_{query}",
+            )
+
+            if "error" in response:
+                logger.error(f"Failed to get related queries: {response['error']}")
+                return []
+
+            content = response["choices"][0]["message"]["content"]
+            suggestions = json.loads(content)
+
+            if not isinstance(suggestions, list):
+                logger.error("Invalid suggestions format - not a list")
+                return []
+
+            return suggestions
+
+        except Exception as e:
+            logger.error(f"Failed to suggest related queries: {e}")
+            return []
+
+    def enhance_search_results(self, query: str, results: list) -> Dict[str, Any]:
+        """Enhance search results with LLM analysis.
+
+        Args:
+            query: Original search query
+            results: List of search results
+
+        Returns:
+            Enhanced results with LLM analysis
+        """
+        try:
+            # Prepare results summary for LLM
+            results_summary = []
+            for r in results[:3]:  # Analyze top 3 results
+                results_summary.append(
+                    f"- {r['method']} {r['path']}: {r.get('description', 'No description')}"
+                )
+
+            prompt = f"""Analyze these API search results for the query: "{query}"
+
+Top results:
+{chr(10).join(results_summary)}
+
+Provide a brief analysis in JSON format with these fields:
+- relevance: How relevant the results are to the query (0-1)
+- coverage: How well the results cover different aspects of the query (0-1)
+- suggestions: List of suggestions for better search results
+- highlights: Key points from the top results
+
+Example response:
+{{
+    "relevance": 0.8,
+    "coverage": 0.7,
+    "suggestions": ["Use more specific terms", "Try filtering by HTTP method"],
+    "highlights": ["Most results are GET endpoints", "Good mix of CRUD operations"]
+}}"""
+
+            response = self.call(
+                prompt=prompt,
+                temperature=0.3,
+                cache_key=f"enhance_results_{query}",
+            )
+
+            if "error" in response:
+                logger.error(f"Failed to enhance results: {response['error']}")
+                return {"analysis": {}}
+
+            content = response["choices"][0]["message"]["content"]
+            analysis = json.loads(content)
+
+            if not isinstance(analysis, dict):
+                logger.error("Invalid analysis format - not a dictionary")
+                return {"analysis": {}}
+
+            return {"analysis": analysis}
+
+        except Exception as e:
+            logger.error(f"Failed to enhance search results: {e}")
+            return {"analysis": {}}
