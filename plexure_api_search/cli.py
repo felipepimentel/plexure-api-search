@@ -17,7 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .indexing import APIIndexer
-from .search import Consistency, SearchResult
+from .search import Consistency
 from .search.expansion import QueryExpander
 from .search.searcher import APISearcher
 from .search.understanding import ZeroShotUnderstanding
@@ -137,12 +137,12 @@ def render_search_progress() -> Panel:
     )
 
 
-def render_result_details(result: SearchResult) -> Panel:
+def render_result_details(result: Dict[str, Any]) -> Panel:
     """Render detailed view of a search result."""
     details = Text()
 
     # Score
-    score_percentage = result.score * 100
+    score_percentage = float(result["score"]) * 100
     score_color = (
         "green"
         if score_percentage > 80
@@ -155,8 +155,8 @@ def render_result_details(result: SearchResult) -> Panel:
 
     # API Info
     details.append("\n📚 API Information\n", style="bold cyan")
-    details.append(f"Name: {result.api_name}\n", style="bright_blue")
-    details.append(f"Version: {result.api_version}\n", style="blue")
+    details.append(f"Name: {result['api_name']}\n", style="bright_blue")
+    details.append(f"Version: {result['api_version']}\n", style="blue")
 
     # Endpoint Info
     details.append("\n🔗 Endpoint Details\n", style="bold magenta")
@@ -169,44 +169,44 @@ def render_result_details(result: SearchResult) -> Panel:
     }
     details.append("Method: ", style="bright_magenta")
     details.append(
-        f"{result.method}\n",
-        style=f"bold {method_colors.get(result.method, 'white')}",
+        f"{result['method']}\n",
+        style=f"bold {method_colors.get(result['method'], 'white')}",
     )
     details.append("Path: ", style="bright_magenta")
-    details.append(f"{result.path}\n", style="white")
+    details.append(f"{result['path']}\n", style="white")
 
     # Authentication
-    auth_style = "bold red" if result.requires_auth else "bold green"
+    auth_style = "bold red" if result["requires_auth"] else "bold green"
     details.append("\n🔒 Authentication: ", style="bold")
     details.append(
-        "Required\n" if result.requires_auth else "Not Required\n",
+        "Required\n" if result["requires_auth"] else "Not Required\n",
         style=auth_style,
     )
 
     # Description
-    if result.description:
+    if result.get("description"):
         details.append("\n📝 Description\n", style="bold yellow")
-        details.append(f"{result.description}\n", style="bright_yellow")
+        details.append(f"{result['description']}\n", style="bright_yellow")
 
     # Parameters
-    if result.parameters:
+    if result.get("parameters"):
         details.append("\n⚙️ Parameters\n", style="bold green")
-        for param in result.parameters:
+        for param in result["parameters"]:
             details.append(f"• {param}\n", style="bright_green")
 
     # Responses
-    if result.responses:
+    if result.get("responses"):
         details.append("\n📤 Responses\n", style="bold blue")
-        for response in result.responses:
+        for response in result["responses"]:
             details.append(f"• {response}\n", style="bright_blue")
 
     # Tags
-    if result.tags:
+    if result.get("tags"):
         details.append("\n🏷️ Tags\n", style="bold magenta")
-        details.append(", ".join(result.tags) + "\n", style="bright_magenta")
+        details.append(", ".join(result["tags"]) + "\n", style="bright_magenta")
 
     # Deprecation warning
-    if result.deprecated:
+    if result.get("deprecated"):
         details.append("\n⚠️ DEPRECATED\n", style="bold red")
 
     return Panel(
@@ -226,8 +226,24 @@ def cli():
 class SearchState:
     """Manage search state and navigation."""
 
-    def __init__(self, results: List[SearchResult]):
-        self.results = results
+    def __init__(self, results: Dict[str, Any]):
+        self.results = results.get("results", [])
+        # Convert related queries to list of dictionaries if not already
+        related = results.get("related_queries", [])
+        if isinstance(related, list):
+            self.related_queries = [
+                {
+                    "query": q.get("query", ""),
+                    "category": q.get("category", ""),
+                    "description": q.get("description", ""),
+                    "score": float(q.get("score", 0)),
+                }
+                if isinstance(q, dict)
+                else {"query": str(q), "category": "", "description": "", "score": 0.0}
+                for q in related
+            ]
+        else:
+            self.related_queries = []
         self.selected_index = 0
         self.is_details_view = False
         self.filter_auth_only = False
@@ -235,36 +251,36 @@ class SearchState:
         self.filter_text = ""
 
     @property
-    def filtered_results(self) -> List[SearchResult]:
+    def filtered_results(self) -> List[Dict[str, Any]]:
         """Get filtered results based on current state."""
         results = self.results
 
         # Apply auth filter
         if self.filter_auth_only:
-            results = [r for r in results if r.requires_auth]
+            results = [r for r in results if r.get("requires_auth", False)]
 
         # Apply text filter
         if self.filter_text:
             results = [
                 r
                 for r in results
-                if self.filter_text.lower() in r.path.lower()
-                or self.filter_text.lower() in r.api_name.lower()
+                if self.filter_text.lower() in r.get("path", "").lower()
+                or self.filter_text.lower() in r.get("api_name", "").lower()
             ]
 
         # Apply sorting
         if self.sort_by == "method":
-            results = sorted(results, key=lambda x: x.method)
+            results = sorted(results, key=lambda x: x.get("method", ""))
         elif self.sort_by == "api":
-            results = sorted(results, key=lambda x: x.api_name)
+            results = sorted(results, key=lambda x: x.get("api_name", ""))
         elif self.sort_by == "path":
-            results = sorted(results, key=lambda x: x.path)
+            results = sorted(results, key=lambda x: x.get("path", ""))
         # Default is relevance (already sorted)
 
         return results
 
     @property
-    def current_result(self) -> Optional[SearchResult]:
+    def current_result(self) -> Optional[Dict[str, Any]]:
         """Get currently selected result."""
         results = self.filtered_results
         if not results:
@@ -325,7 +341,7 @@ def render_stats(state: SearchState) -> Panel:
     stats = Text()
     total = len(state.results)
     filtered = len(state.filtered_results)
-    auth_count = sum(1 for r in state.filtered_results if r.requires_auth)
+    auth_count = sum(1 for r in state.filtered_results if r.get("requires_auth", False))
 
     stats.append("\n📊 Results: ", style="bold yellow")
     stats.append(f"{filtered}/{total}\n", style="cyan")
@@ -392,7 +408,7 @@ def render_results_table(state: SearchState) -> Table:
     # Add rows
     for i, result in enumerate(state.filtered_results):
         # Score formatting
-        score_percentage = result.score * 100
+        score_percentage = float(result["score"]) * 100
         score_color = (
             "green"
             if score_percentage > 80
@@ -411,12 +427,12 @@ def render_results_table(state: SearchState) -> Table:
             "PATCH": "magenta",
         }
         method_text = Text(
-            result.method,
-            style=method_colors.get(result.method, "white"),
+            result["method"],
+            style=method_colors.get(result["method"], "white"),
         )
 
         # Auth formatting
-        auth_text = "🔒" if result.requires_auth else "🔓"
+        auth_text = "🔒" if result["requires_auth"] else "🔓"
 
         # Row style for selected item
         row_style = "reverse" if i == state.selected_index else ""
@@ -424,8 +440,8 @@ def render_results_table(state: SearchState) -> Table:
         table.add_row(
             score_text,
             method_text,
-            result.path,
-            result.api_name,
+            result["path"],
+            result["api_name"],
             auth_text,
             style=row_style,
         )
@@ -443,7 +459,9 @@ def render_search_interface(
     layout["header"].update(render_header(query))
 
     # Create results panel with legend
-    results_content = Group(render_results_table(state), render_method_legend())
+    table_result = render_results_table(state)
+    method_legend = render_method_legend()
+    results_content = Group(table_result, method_legend)
 
     layout["results"].update(
         Panel(
@@ -459,22 +477,65 @@ def render_search_interface(
     if show_help:
         layout["side_panel"].update(render_help())
     else:
+        # Split side panel into three sections
+        layout["side_panel"].split(
+            Layout(name="details", ratio=3),
+            Layout(name="related", ratio=2),
+            Layout(name="stats", ratio=1),
+        )
+
+        # Update details section
         if state.current_result:
-            layout["side_panel"].split(
-                Layout(name="details", ratio=3), Layout(name="stats", ratio=1)
-            )
             layout["side_panel"]["details"].update(
                 render_result_details(state.current_result)
             )
-            layout["side_panel"]["stats"].update(render_stats(state))
         else:
-            layout["side_panel"].update(
+            layout["side_panel"]["details"].update(
                 Panel(
                     "[yellow]No results found[/yellow]",
                     title="Details",
                     border_style="red",
                 )
             )
+
+        # Update related queries section
+        if state.related_queries:
+            related_text = Text()
+            for query_info in state.related_queries:
+                score = float(query_info.get("score", 0)) * 100
+                score_color = (
+                    "green" if score > 80 else "yellow" if score > 50 else "red"
+                )
+                related_text.append("\n• ", style="bold")
+                related_text.append(query_info.get("query", ""), style=score_color)
+                related_text.append(f" ({query_info.get('category', '')})", style="dim")
+                if query_info.get("description"):
+                    related_text.append(
+                        f"\n  {query_info['description']}", style="italic"
+                    )
+
+            layout["side_panel"]["related"].update(
+                Panel(
+                    related_text,
+                    title="[bold]Related Queries",
+                    border_style="cyan",
+                    box=box.ROUNDED,
+                    padding=(1, 2),
+                )
+            )
+        else:
+            layout["side_panel"]["related"].update(
+                Panel(
+                    "[dim]No related queries[/dim]",
+                    title="[bold]Related Queries",
+                    border_style="cyan",
+                    box=box.ROUNDED,
+                    padding=(1, 2),
+                )
+            )
+
+        # Update stats section
+        layout["side_panel"]["stats"].update(render_stats(state))
 
     # Set footer
     layout["footer"].update(render_footer())
@@ -501,7 +562,7 @@ def handle_keyboard_input(state: SearchState) -> bool:
         state.filter_text = Prompt.ask("Enter filter text")
     elif key == "c" and state.current_result:
         # Copy endpoint path to clipboard
-        path = state.current_result.path
+        path = state.current_result.get("path", "")
         click.echo(path, nl=False)
         console.print("[green]✓[/green] Copied to clipboard!")
 
@@ -529,8 +590,7 @@ def search(
                 return
 
         # Initialize search
-        searcher = APISearcher(top_k=top_k)
-
+        searcher = APISearcher(top_k=top_k, use_cache=cache)
         # Show search progress
         with Live(
             render_search_progress(),
@@ -543,7 +603,6 @@ def search(
         # Initialize state
         state = SearchState(results)
         show_help = False
-
         # Main interaction loop
         with Live(
             render_search_interface(state, show_help, query),
@@ -556,7 +615,6 @@ def search(
                 # Handle keyboard input
                 if not handle_keyboard_input(state):
                     break
-
                 # Update display
                 live.update(render_search_interface(state, show_help, query))
                 live.refresh()
@@ -670,10 +728,10 @@ def analyze_endpoint(endpoint_id: str):
     console.print("\n[bold]Endpoint Analysis:[/bold]")
 
     console.print("\n[cyan]Basic Information:[/cyan]")
-    console.print(f"API: {endpoint['api_name']}")
-    console.print(f"Version: {endpoint['api_version']}")
-    console.print(f"Path: {endpoint['path']}")
-    console.print(f"Method: {endpoint['method']}")
+    console.print(f"API: {endpoint.get('api_name', 'Unknown')}")
+    console.print(f"Version: {endpoint.get('api_version', 'Unknown')}")
+    console.print(f"Path: {endpoint.get('path', 'Unknown')}")
+    console.print(f"Method: {endpoint.get('method', 'Unknown')}")
 
     console.print("\n[cyan]Category Information:[/cyan]")
     console.print(f"Primary Category: {category.name} ({category.confidence:.3f})")

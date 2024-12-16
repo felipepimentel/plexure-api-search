@@ -15,8 +15,7 @@ load_dotenv()
 class Config:
     """Application configuration."""
 
-    # Vector store settings
-    vector_store: str = os.getenv("VECTOR_STORE", "pinecone")  # "pinecone" or "faiss"
+    # Vector dimension settings
     vector_dimension: int = int(os.getenv("VECTOR_DIMENSION", "384"))
 
     # FAISS settings
@@ -28,6 +27,15 @@ class Config:
     pinecone_index_name: str = os.getenv("PINECONE_INDEX_NAME", "api-search")
     pinecone_region: str = os.getenv("PINECONE_REGION", "us-east-1")
     pinecone_cloud: str = os.getenv("PINECONE_CLOUD", "aws")
+
+    # OpenRouter settings
+    openrouter_api_key: Optional[str] = os.getenv("OPENROUTER_API_KEY")
+    openrouter_model: str = os.getenv(
+        "OPENROUTER_MODEL", 
+        "mistral/mistral-small"  # Good balance between cost and performance
+    )
+    openrouter_max_tokens: int = int(os.getenv("OPENROUTER_MAX_TOKENS", "1024"))
+    openrouter_temperature: float = float(os.getenv("OPENROUTER_TEMPERATURE", "0.7"))
 
     # Model settings
     bi_encoder_model: str = os.getenv("BI_ENCODER_MODEL", "all-MiniLM-L6-v2")
@@ -58,15 +66,13 @@ class Config:
         # Create cache directory if it doesn't exist
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        # Validate vector store
-        if self.vector_store not in ["pinecone", "faiss"]:
-            raise ValueError(
-                f"Invalid vector store: {self.vector_store}. Must be 'pinecone' or 'faiss'"
-            )
+        # Validate Pinecone settings
+        if not self.pinecone_api_key:
+            raise ValueError("PINECONE_API_KEY is required")
 
-        # Validate Pinecone settings if using Pinecone
-        if self.vector_store == "pinecone" and not self.pinecone_api_key:
-            raise ValueError("PINECONE_API_KEY is required when using Pinecone")
+        # Validate OpenRouter settings
+        if not self.openrouter_api_key:
+            raise ValueError("OPENROUTER_API_KEY is required")
 
 
 # Global configuration instance

@@ -4,7 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from ..embeddings.transformer import get_embeddings
-from ..storage.vector_stores.pinecone import vector_store
+from ..integrations.vector_stores.pinecone import vector_store
 from .base import BaseSearch
 
 logger = logging.getLogger(__name__)
