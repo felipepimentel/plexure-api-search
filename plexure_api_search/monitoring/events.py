@@ -1,9 +1,10 @@
 """Event system for tracking processing steps."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional
+import statistics
 
 
 class EventType(Enum):
@@ -42,6 +43,11 @@ class EventType(Enum):
     VALIDATION_STARTED = auto()
     VALIDATION_COMPLETED = auto()
     VALIDATION_FAILED = auto()
+    
+    # Monitoring events
+    MONITORING_STARTED = auto()
+    MONITORING_UPDATED = auto()
+    MONITORING_STOPPED = auto()
 
 
 @dataclass
@@ -80,6 +86,9 @@ class EventManager:
         """Initialize event manager."""
         self._subscribers: List[Callable[[Event], None]] = []
         self._progress: Dict[str, Dict[str, Any]] = {}
+        self._events: List[Event] = []  # Store recent events
+        self._max_events = 1000  # Maximum number of events to store
+        self._monitoring_start_time = None
     
     def subscribe(self, callback: Callable[[Event], None]) -> None:
         """Subscribe to events."""
@@ -93,6 +102,13 @@ class EventManager:
     
     def emit(self, event: Event) -> None:
         """Emit an event to all subscribers."""
+        # Store event
+        self._events.append(event)
+        
+        # Trim old events if needed
+        if len(self._events) > self._max_events:
+            self._events = self._events[-self._max_events:]
+        
         # Update progress tracking
         self._update_progress(event)
         
@@ -136,7 +152,90 @@ class EventManager:
     def get_progress(self) -> Dict[str, Dict[str, Any]]:
         """Get current progress status for all components."""
         return self._progress.copy()
+    
+    def get_recent_events(self, minutes: int = 5) -> List[Event]:
+        """Get events from the last N minutes.
+        
+        Args:
+            minutes: Number of minutes to look back
+            
+        Returns:
+            List of recent events
+        """
+        cutoff = datetime.now() - timedelta(minutes=minutes)
+        return [e for e in self._events if e.timestamp >= cutoff]
+    
+    def get_cache_hit_rate(self) -> float:
+        """Calculate cache hit rate from recent events.
+        
+        Returns:
+            Cache hit rate as a float between 0 and 1
+        """
+        recent = self.get_recent_events()
+        hits = len([e for e in recent if e.type == EventType.CACHE_HIT])
+        misses = len([e for e in recent if e.type == EventType.CACHE_MISS])
+        total = hits + misses
+        return hits / total if total > 0 else 0.0
+    
+    def get_average_search_time(self) -> float:
+        """Calculate average search time from recent events.
+        
+        Returns:
+            Average search time in seconds
+        """
+        search_events = [
+            e for e in self.get_recent_events() 
+            if e.type == EventType.SEARCH_COMPLETED and e.duration_ms is not None
+        ]
+        if not search_events:
+            return 0.0
+        durations = [e.duration_ms / 1000.0 for e in search_events]  # Convert to seconds
+        return statistics.mean(durations) if durations else 0.0
+    
+    def get_active_model_count(self) -> int:
+        """Get count of currently active models.
+        
+        Returns:
+            Number of active models
+        """
+        recent = self.get_recent_events()
+        loaded = set()
+        unloaded = set()
+        
+        for event in recent:
+            if event.type == EventType.MODEL_LOADING_COMPLETED and event.algorithm:
+                loaded.add(event.algorithm)
+            elif event.type == EventType.MODEL_LOADING_FAILED and event.algorithm:
+                unloaded.add(event.algorithm)
+                
+        return len(loaded - unloaded)
+    
+    def start_monitoring(self) -> None:
+        """Start monitoring session."""
+        self._monitoring_start_time = datetime.now()
+        self.emit(Event(
+            type=EventType.MONITORING_STARTED,
+            timestamp=datetime.now(),
+            component="monitoring",
+            description="Started monitoring session"
+        ))
+    
+    def stop_monitoring(self) -> None:
+        """Stop monitoring session."""
+        if self._monitoring_start_time:
+            duration = (datetime.now() - self._monitoring_start_time).total_seconds()
+            self.emit(Event(
+                type=EventType.MONITORING_STOPPED,
+                timestamp=datetime.now(),
+                component="monitoring",
+                description="Stopped monitoring session",
+                duration_ms=duration * 1000,
+                metadata={"session_duration": duration}
+            ))
+            self._monitoring_start_time = None
 
 
 # Global event manager instance
-event_manager = EventManager() 
+event_manager = EventManager()
+
+__all__ = ["event_manager", "Event", "EventType"] 

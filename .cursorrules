@@ -1,5 +1,15 @@
 # Plexure API Search - Cursor Rules
 
+# Code Preservation Rules
+- Never remove existing code that is not directly related to the current change scope
+- Always maintain existing functionality unless explicitly requested to change
+- Keep all existing imports and dependencies unless they are specifically being refactored
+- Preserve existing error handling and logging mechanisms
+- Maintain existing configuration options and defaults
+- Keep all existing CLI commands and their functionality
+- Do not remove or modify existing tests unless they are directly related to changes
+- Preserve existing documentation unless it needs to be updated for new changes
+
 # File Specific Rules
 
 ## Core Files
