@@ -24,7 +24,10 @@ class PineconeClient:
 
         # Initialize Pinecone
         try:
-            pc = Pinecone(api_key=config_instance.pinecone_api_key)
+            pc = Pinecone(
+                api_key=config_instance.pinecone_api_key,
+                environment=config_instance.pinecone_environment
+            )
 
             # Check if index exists
             existing_indexes = [index.name for index in pc.list_indexes()]
@@ -35,7 +38,7 @@ class PineconeClient:
                     name=self.index_name,
                     dimension=self.dimension,
                     metric="cosine",  # Use cosine similarity by default
-                    pod_type="p1.x1"  # Use pod-based index
+                    pod_type="starter"  # Use starter pod for testing
                 )
                 time.sleep(2)  # Wait for index creation
 
@@ -46,6 +49,7 @@ class PineconeClient:
             self._verify_connection()
 
         except Exception as e:
+            logger.error(f"Failed to initialize Pinecone: {str(e)}")
             raise RuntimeError(f"Failed to initialize Pinecone: {str(e)}")
 
     def _verify_connection(self) -> Dict:

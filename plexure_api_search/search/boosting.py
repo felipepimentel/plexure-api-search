@@ -29,6 +29,12 @@ class BusinessContext:
     value: BusinessValue
     category: str
     usage_frequency: float
+    query_intent: str = "general"
+    user_segment: str = "general"
+    use_case: str = "general"
+    industry_vertical: str = "general"
+    integration_complexity: float = 0.5
+    time_sensitivity: float = 0.5
     last_accessed: Optional[datetime] = None
     metadata: Optional[Dict[str, Any]] = None
 
@@ -38,6 +44,12 @@ class BusinessContext:
             "value": self.value.value,
             "category": self.category,
             "usage_frequency": self.usage_frequency,
+            "query_intent": self.query_intent,
+            "user_segment": self.user_segment,
+            "use_case": self.use_case,
+            "industry_vertical": self.industry_vertical,
+            "integration_complexity": self.integration_complexity,
+            "time_sensitivity": self.time_sensitivity,
             "last_accessed": self.last_accessed.isoformat() if self.last_accessed else None,
             "metadata": self.metadata or {},
         }
@@ -49,6 +61,12 @@ class BusinessContext:
             value=BusinessValue(data["value"]),
             category=data["category"],
             usage_frequency=data["usage_frequency"],
+            query_intent=data.get("query_intent", "general"),
+            user_segment=data.get("user_segment", "general"),
+            use_case=data.get("use_case", "general"),
+            industry_vertical=data.get("industry_vertical", "general"),
+            integration_complexity=data.get("integration_complexity", 0.5),
+            time_sensitivity=data.get("time_sensitivity", 0.5),
             last_accessed=datetime.fromisoformat(data["last_accessed"]) if data.get("last_accessed") else None,
             metadata=data.get("metadata", {}),
         )
@@ -312,3 +330,61 @@ class ContextualBooster:
                 break
 
         self._save_history()
+
+    def analyze_query_intent(self, query: str) -> BusinessContext:
+        """Analyze query intent and create business context.
+
+        Args:
+            query: Search query string
+
+        Returns:
+            BusinessContext object
+        """
+        # Default context values
+        value = BusinessValue.MEDIUM
+        category = "general"
+        usage_frequency = 0.5
+        
+        # Analyze query for business value
+        query = query.lower()
+        
+        # Check for high-value patterns
+        high_value_patterns = [
+            "revenue", "monetize", "profit", "sales", "customer",
+            "payment", "transaction", "billing", "subscription"
+        ]
+        if any(pattern in query for pattern in high_value_patterns):
+            value = BusinessValue.HIGH
+            category = "revenue"
+            usage_frequency = 0.8
+            
+        # Check for compliance/security patterns
+        compliance_patterns = [
+            "auth", "security", "compliance", "gdpr", "privacy",
+            "encrypt", "protect", "sensitive"
+        ]
+        if any(pattern in query for pattern in compliance_patterns):
+            value = BusinessValue.HIGH
+            category = "security"
+            usage_frequency = 0.7
+            
+        # Check for optimization patterns
+        optimization_patterns = [
+            "optimize", "performance", "speed", "efficient",
+            "scale", "improve", "fast"
+        ]
+        if any(pattern in query for pattern in optimization_patterns):
+            value = BusinessValue.MEDIUM
+            category = "optimization"
+            usage_frequency = 0.6
+            
+        return BusinessContext(
+            value=value,
+            category=category,
+            usage_frequency=usage_frequency,
+            last_accessed=datetime.now(),
+            metadata={
+                "query": query,
+                "query_type": self.detect_query_type(query)
+            }
+        )

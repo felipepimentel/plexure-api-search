@@ -1,35 +1,19 @@
-"""Zero-shot API understanding and relationship mapping."""
+"""Natural language understanding for API search."""
 
-from typing import Dict, List, Set, Tuple, Optional
-import networkx as nx
-from dataclasses import dataclass
-from collections import defaultdict
-import re
-from sentence_transformers import SentenceTransformer, util
+import logging
+import time
+from datetime import datetime
+from typing import List, Optional, Dict, Any
+import numpy as np
 
+from sentence_transformers import SentenceTransformer
+from ..monitoring.events import Event, EventType, event_manager
 
-@dataclass
-class APICategory:
-    """Category information for an API endpoint."""
-    name: str
-    confidence: float
-    subcategories: List[str]
-    features: List[str]
-
-
-@dataclass
-class APIRelationship:
-    """Relationship between two API endpoints."""
-    source: str
-    target: str
-    relationship_type: str  # 'depends_on', 'similar_to', 'alternative_to'
-    confidence: float
-    description: str
-
+logger = logging.getLogger(__name__)
 
 class ZeroShotUnderstanding:
-    """Handles zero-shot understanding of APIs."""
-    
+    """Zero-shot understanding of API queries and endpoints."""
+
     def __init__(
         self,
         model_name: str = "all-MiniLM-L6-v2",
@@ -80,322 +64,105 @@ class ZeroShotUnderstanding:
             ]
         }
         
-        # Pre-defined features
-        self.features = {
-            "Pagination": [
-                "page", "limit", "offset", "size",
-                "next", "previous", "total"
+        # Pre-defined intents with examples
+        self.intents = {
+            "search": [
+                "find", "search", "look for", "get", "list",
+                "show", "display", "retrieve"
             ],
-            "Filtering": [
-                "filter", "query", "search", "where",
-                "condition", "criteria"
+            "create": [
+                "create", "add", "new", "register", "insert",
+                "make", "generate"
             ],
-            "Sorting": [
-                "sort", "order", "direction", "asc",
-                "desc", "ascending", "descending"
+            "update": [
+                "update", "modify", "change", "edit", "patch",
+                "alter"
             ],
-            "Caching": [
-                "cache", "etag", "if-none-match",
-                "if-modified-since", "expires"
+            "delete": [
+                "delete", "remove", "destroy", "clear", "erase"
             ],
-            "Rate Limiting": [
-                "rate", "limit", "throttle", "quota",
-                "requests", "window"
-            ],
-            "Versioning": [
-                "version", "v1", "v2", "deprecated",
-                "sunset", "legacy"
+            "authenticate": [
+                "login", "authenticate", "sign in", "token",
+                "credentials", "auth"
             ]
         }
-        
-        # Initialize relationship graph
-        self.relationship_graph = nx.DiGraph()
-        
-    def _calculate_similarity(self, text1: str, text2: str) -> float:
-        """Calculate semantic similarity between two texts.
+
+    def get_categories(self, text: str) -> List[str]:
+        """Get matching categories for text.
         
         Args:
-            text1: First text.
-            text2: Second text.
+            text: Input text to categorize
             
         Returns:
-            Similarity score between 0 and 1.
+            List of matching category names
         """
-        embedding1 = self.model.encode(text1, convert_to_tensor=True)
-        embedding2 = self.model.encode(text2, convert_to_tensor=True)
-        return float(util.pytorch_cos_sim(embedding1, embedding2))
-        
-    def categorize_endpoint(
-        self,
-        endpoint_data: Dict
-    ) -> APICategory:
-        """Categorize an API endpoint.
-        
-        Args:
-            endpoint_data: Dictionary containing endpoint information.
+        try:
+            # Get text embedding
+            text_embedding = self.model.encode(text, convert_to_numpy=True)
             
-        Returns:
-            APICategory with categorization information.
-        """
-        # Combine relevant text for analysis
-        endpoint_text = f"""
-        Path: {endpoint_data.get('path', '')}
-        Method: {endpoint_data.get('method', '')}
-        Description: {endpoint_data.get('description', '')}
-        Summary: {endpoint_data.get('summary', '')}
-        Tags: {', '.join(endpoint_data.get('tags', []))}
-        """
-        
-        # Calculate similarities with categories
-        category_scores = []
-        for category, examples in self.categories.items():
-            category_text = ' '.join(examples)
-            similarity = self._calculate_similarity(endpoint_text, category_text)
-            category_scores.append((category, similarity))
-        
-        # Get best category
-        best_category, best_score = max(category_scores, key=lambda x: x[1])
-        
-        # Find subcategories (other categories with high similarity)
-        subcategories = [
-            category for category, score in category_scores
-            if score > self.similarity_threshold and category != best_category
-        ]
-        
-        # Detect features
-        features = []
-        for feature, patterns in self.features.items():
-            feature_text = ' '.join(patterns)
-            if self._calculate_similarity(endpoint_text, feature_text) > self.similarity_threshold:
-                features.append(feature)
-        
-        return APICategory(
-            name=best_category,
-            confidence=best_score,
-            subcategories=subcategories,
-            features=features
-        )
-        
-    def find_relationships(
-        self,
-        endpoints: List[Dict]
-    ) -> List[APIRelationship]:
-        """Find relationships between API endpoints.
-        
-        Args:
-            endpoints: List of endpoint dictionaries.
-            
-        Returns:
-            List of discovered relationships.
-        """
-        relationships = []
-        
-        # Clear existing graph
-        self.relationship_graph.clear()
-        
-        # Add nodes
-        for endpoint in endpoints:
-            node_id = f"{endpoint['method']}_{endpoint['path']}"
-            self.relationship_graph.add_node(
-                node_id,
-                data=endpoint
-            )
-        
-        # Analyze each pair of endpoints
-        for i, endpoint1 in enumerate(endpoints):
-            node1 = f"{endpoint1['method']}_{endpoint1['path']}"
-            
-            for endpoint2 in endpoints[i+1:]:
-                node2 = f"{endpoint2['method']}_{endpoint2['path']}"
+            # Get embeddings for all category examples
+            matching_categories = set()
+            for category, examples in self.categories.items():
+                # Get embeddings for examples
+                example_embeddings = self.model.encode(examples, convert_to_numpy=True)
                 
-                # Skip self-relationships
-                if node1 == node2:
-                    continue
+                # Compute similarities
+                similarities = []
+                for example_embedding in example_embeddings:
+                    similarity = np.dot(text_embedding, example_embedding) / (
+                        np.linalg.norm(text_embedding) * np.linalg.norm(example_embedding)
+                    )
+                    similarities.append(similarity)
                 
-                # Check for dependencies
-                if self._has_dependency(endpoint1, endpoint2):
-                    relationship = APIRelationship(
-                        source=node1,
-                        target=node2,
-                        relationship_type='depends_on',
-                        confidence=0.9,
-                        description=f"{node1} requires {node2}"
-                    )
-                    relationships.append(relationship)
-                    self.relationship_graph.add_edge(
-                        node1, node2,
-                        relationship=relationship
-                    )
-                
-                # Check for similarities
-                similarity = self._calculate_endpoint_similarity(endpoint1, endpoint2)
-                if similarity > self.similarity_threshold:
-                    relationship = APIRelationship(
-                        source=node1,
-                        target=node2,
-                        relationship_type='similar_to',
-                        confidence=similarity,
-                        description=f"{node1} is similar to {node2}"
-                    )
-                    relationships.append(relationship)
-                    self.relationship_graph.add_edge(
-                        node1, node2,
-                        relationship=relationship
-                    )
-                
-                # Check for alternatives
-                if self._are_alternatives(endpoint1, endpoint2):
-                    relationship = APIRelationship(
-                        source=node1,
-                        target=node2,
-                        relationship_type='alternative_to',
-                        confidence=0.8,
-                        description=f"{node1} is an alternative to {node2}"
-                    )
-                    relationships.append(relationship)
-                    self.relationship_graph.add_edge(
-                        node1, node2,
-                        relationship=relationship
-                    )
-        
-        return relationships
-        
-    def _has_dependency(self, endpoint1: Dict, endpoint2: Dict) -> bool:
-        """Check if endpoint1 depends on endpoint2.
-        
-        Args:
-            endpoint1: First endpoint dictionary.
-            endpoint2: Second endpoint dictionary.
+                # If any example is above threshold, add category
+                if max(similarities) > self.similarity_threshold:
+                    matching_categories.add(category)
             
-        Returns:
-            True if dependency exists, False otherwise.
-        """
-        # Check if endpoint2's path appears in endpoint1's description
-        path2 = endpoint2['path']
-        desc1 = endpoint1.get('description', '').lower()
-        
-        if path2.lower() in desc1:
-            return True
+            return list(matching_categories)
             
-        # Check for ID parameter patterns
-        path1_parts = endpoint1['path'].split('/')
-        path2_parts = endpoint2['path'].split('/')
-        
-        for part1, part2 in zip(path1_parts, path2_parts):
-            if part1.startswith('{') and part2.endswith('_id}'):
-                return True
-                
-        return False
-        
-    def _calculate_endpoint_similarity(self, endpoint1: Dict, endpoint2: Dict) -> float:
-        """Calculate similarity between two endpoints.
-        
-        Args:
-            endpoint1: First endpoint dictionary.
-            endpoint2: Second endpoint dictionary.
-            
-        Returns:
-            Similarity score between 0 and 1.
-        """
-        # Combine relevant information for each endpoint
-        text1 = f"""
-        Path: {endpoint1['path']}
-        Method: {endpoint1['method']}
-        Description: {endpoint1.get('description', '')}
-        Summary: {endpoint1.get('summary', '')}
-        """
-        
-        text2 = f"""
-        Path: {endpoint2['path']}
-        Method: {endpoint2['method']}
-        Description: {endpoint2.get('description', '')}
-        Summary: {endpoint2.get('summary', '')}
-        """
-        
-        return self._calculate_similarity(text1, text2)
-        
-    def _are_alternatives(self, endpoint1: Dict, endpoint2: Dict) -> bool:
-        """Check if endpoints are alternatives to each other.
-        
-        Args:
-            endpoint1: First endpoint dictionary.
-            endpoint2: Second endpoint dictionary.
-            
-        Returns:
-            True if endpoints are alternatives, False otherwise.
-        """
-        # Check if endpoints have similar paths but different methods
-        path1 = re.sub(r'{[^}]+}', '*', endpoint1['path'])
-        path2 = re.sub(r'{[^}]+}', '*', endpoint2['path'])
-        
-        if path1 == path2 and endpoint1['method'] != endpoint2['method']:
-            return True
-            
-        # Check for bulk vs. single operation patterns
-        if (
-            endpoint1['path'] + 's' == endpoint2['path'] or
-            endpoint2['path'] + 's' == endpoint1['path']
-        ):
-            return True
-            
-        return False
-        
-    def get_api_dependencies(self, endpoint: Dict) -> List[str]:
-        """Get list of endpoints that this endpoint depends on.
-        
-        Args:
-            endpoint: Endpoint dictionary.
-            
-        Returns:
-            List of dependent endpoint paths.
-        """
-        node_id = f"{endpoint['method']}_{endpoint['path']}"
-        if node_id not in self.relationship_graph:
+        except Exception as e:
+            logger.error(f"Failed to get categories: {e}")
             return []
-            
-        dependencies = []
-        for _, target, data in self.relationship_graph.out_edges(node_id, data=True):
-            if data['relationship'].relationship_type == 'depends_on':
-                dependencies.append(target)
-                
-        return dependencies
-        
-    def get_similar_endpoints(self, endpoint: Dict) -> List[str]:
-        """Get list of endpoints similar to this one.
-        
+
+    def classify_intent(self, query: str) -> str:
+        """Classify the intent of a search query.
+
         Args:
-            endpoint: Endpoint dictionary.
-            
+            query: Search query
+
         Returns:
-            List of similar endpoint paths.
+            Classified intent
         """
-        node_id = f"{endpoint['method']}_{endpoint['path']}"
-        if node_id not in self.relationship_graph:
-            return []
+        try:
+            # Get query embedding
+            query_embedding = self.model.encode(query, convert_to_numpy=True)
             
-        similar = []
-        for _, target, data in self.relationship_graph.out_edges(node_id, data=True):
-            if data['relationship'].relationship_type == 'similar_to':
-                similar.append(target)
+            # Get embeddings for all intent examples
+            best_intent = "search"  # Default intent
+            best_score = 0.0
+            
+            for intent, examples in self.intents.items():
+                # Get embeddings for examples
+                example_embeddings = self.model.encode(examples, convert_to_numpy=True)
                 
-        return similar
-        
-    def get_alternative_endpoints(self, endpoint: Dict) -> List[str]:
-        """Get list of alternative endpoints.
-        
-        Args:
-            endpoint: Endpoint dictionary.
-            
-        Returns:
-            List of alternative endpoint paths.
-        """
-        node_id = f"{endpoint['method']}_{endpoint['path']}"
-        if node_id not in self.relationship_graph:
-            return []
-            
-        alternatives = []
-        for _, target, data in self.relationship_graph.out_edges(node_id, data=True):
-            if data['relationship'].relationship_type == 'alternative_to':
-                alternatives.append(target)
+                # Compute similarities
+                similarities = []
+                for example_embedding in example_embeddings:
+                    similarity = np.dot(query_embedding, example_embedding) / (
+                        np.linalg.norm(query_embedding) * np.linalg.norm(example_embedding)
+                    )
+                    similarities.append(similarity)
                 
-        return alternatives 
+                # Get max similarity for this intent
+                max_similarity = max(similarities)
+                
+                # Update best intent if this one is better
+                if max_similarity > best_score:
+                    best_score = max_similarity
+                    best_intent = intent
+            
+            return best_intent
+            
+        except Exception as e:
+            logger.error(f"Failed to classify intent: {e}")
+            return "search"  # Default intent on error

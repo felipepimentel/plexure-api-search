@@ -3,16 +3,17 @@
 import json
 import logging
 import os
+import time
+from datetime import datetime
 import traceback
 from typing import Any, Dict, List, Optional
 
 import yaml
 
 from ..config import config_instance
-from ..embedding.embeddings import TripleVectorizer
-from ..enrichment import LLMEnricher
+from ..search.vectorizer import TripleVectorizer
 from ..integrations import pinecone_instance
-from ..integrations.llm.openrouter_client import OpenRouterClient
+from ..monitoring.events import Event, EventType, event_manager
 from ..utils.file import find_api_files
 from .validation import DataValidator
 
@@ -27,8 +28,6 @@ class APIIndexer:
         self.client = pinecone_instance
         self.vectorizer = TripleVectorizer()
         self.validator = DataValidator()
-        self.llm = OpenRouterClient()
-        self.enricher = LLMEnricher(self.llm)
 
     def _safe_load_yaml(self, file_path: str) -> Optional[Dict[str, Any]]:
         """Safely load YAML/JSON file.
@@ -152,15 +151,16 @@ class APIIndexer:
         force: bool = False,
         validate: bool = True,
     ) -> Dict[str, Any]:
-        """Index all API files in directory.
-
-        Args:
-            force: Whether to force reindexing
-            validate: Whether to validate data before indexing
-
-        Returns:
-            Dictionary with indexing results
-        """
+        """Index all API files in directory."""
+        start_time = time.time()
+        event_manager.emit(Event(
+            type=EventType.INDEXING_STARTED,
+            timestamp=datetime.now(),
+            component="indexer",
+            description="Starting API indexing process",
+            metadata={"force": force, "validate": validate}
+        ))
+        
         try:
             directory = config_instance.api_dir
             logger.info(f"Indexing APIs from directory: {directory}")
@@ -169,12 +169,19 @@ class APIIndexer:
             files = find_api_files(directory)
             if not files:
                 logger.warning("No API files found")
+                event_manager.emit(Event(
+                    type=EventType.INDEXING_COMPLETED,
+                    timestamp=datetime.now(),
+                    component="indexer",
+                    description="No API files found",
+                    success=False,
+                    duration_ms=(time.time() - start_time) * 1000
+                ))
                 return {
                     "total_files": 0,
                     "total_endpoints": 0,
                     "failed_files": [],
                     "indexed_apis": [],
-                    "quality_metrics": None,
                 }
 
             # Process each file
@@ -183,7 +190,16 @@ class APIIndexer:
             indexed_apis = []
             all_endpoints = []
 
-            for file_path in files:
+            for i, file_path in enumerate(files):
+                file_start_time = time.time()
+                event_manager.emit(Event(
+                    type=EventType.INDEXING_FILE_STARTED,
+                    timestamp=datetime.now(),
+                    component="indexer",
+                    description=f"Processing file: {file_path}",
+                    metadata={"file": file_path, "progress": (i / len(files)) * 100}
+                ))
+                
                 try:
                     logger.info(f"Processing file: {file_path}")
                     # Load API spec
@@ -233,429 +249,220 @@ class APIIndexer:
                             logger.info(
                                 f"Successfully indexed {len(endpoints)} endpoints from {file_path}"
                             )
+                            event_manager.emit(Event(
+                                type=EventType.INDEXING_FILE_COMPLETED,
+                                timestamp=datetime.now(),
+                                component="indexer",
+                                description=f"Successfully indexed file: {file_path}",
+                                metadata={
+                                    "file": file_path,
+                                    "endpoints": len(endpoints),
+                                    "progress": ((i + 1) / len(files)) * 100
+                                },
+                                duration_ms=(time.time() - file_start_time) * 1000,
+                                success=True
+                            ))
                         else:
-                            logger.warning(f"No endpoints found in {file_path}")
                             failed_files.append({
                                 "path": file_path,
-                                "error": "No endpoints found",
+                                "error": "No valid endpoints found",
                             })
+                            event_manager.emit(Event(
+                                type=EventType.INDEXING_FILE_FAILED,
+                                timestamp=datetime.now(),
+                                component="indexer",
+                                description=f"Failed to index file: {file_path}",
+                                error="No valid endpoints found",
+                                metadata={"file": file_path},
+                                success=False
+                            ))
 
                     except Exception as e:
-                        logger.error(f"Error indexing file {file_path}: {e}")
-                        logger.error(f"Traceback: {traceback.format_exc()}")
+                        logger.error(f"Failed to index file {file_path}: {e}")
                         failed_files.append({
                             "path": file_path,
                             "error": str(e),
-                            "traceback": traceback.format_exc(),
                         })
+                        event_manager.emit(Event(
+                            type=EventType.INDEXING_FILE_FAILED,
+                            timestamp=datetime.now(),
+                            component="indexer",
+                            description=f"Failed to index file: {file_path}",
+                            error=str(e),
+                            metadata={"file": file_path},
+                            success=False
+                        ))
+                        continue
 
                 except Exception as e:
-                    logger.error(f"Error processing {file_path}: {e}")
-                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    logger.error(f"Failed to process file {file_path}: {e}")
                     failed_files.append({
                         "path": file_path,
                         "error": str(e),
-                        "traceback": traceback.format_exc(),
                     })
+                    event_manager.emit(Event(
+                        type=EventType.INDEXING_FILE_FAILED,
+                        timestamp=datetime.now(),
+                        component="indexer",
+                        description=f"Failed to process file: {file_path}",
+                        error=str(e),
+                        metadata={"file": file_path},
+                        success=False
+                    ))
+                    continue
 
-            # Calculate quality metrics if validated
-            quality_metrics = None
-            if validate and all_endpoints:
-                try:
-                    quality_metrics = self.validator.calculate_quality_metrics(
-                        all_endpoints
-                    )
-                except Exception as e:
-                    logger.error(f"Error calculating quality metrics: {e}")
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-
-            # Log summary
-            logger.info(f"Total files processed: {len(files)}")
-            logger.info(f"Total endpoints indexed: {total_endpoints}")
-            logger.info(f"Failed files: {len(failed_files)}")
-            logger.info(f"Successfully indexed APIs: {len(indexed_apis)}")
+            # Emit completion event
+            duration_ms = (time.time() - start_time) * 1000
+            event_manager.emit(Event(
+                type=EventType.INDEXING_COMPLETED,
+                timestamp=datetime.now(),
+                component="indexer",
+                description="API indexing completed",
+                metadata={
+                    "total_files": len(files),
+                    "total_endpoints": total_endpoints,
+                    "failed_files": len(failed_files),
+                },
+                duration_ms=duration_ms,
+                success=True
+            ))
 
             return {
                 "total_files": len(files),
                 "total_endpoints": total_endpoints,
                 "failed_files": failed_files,
                 "indexed_apis": indexed_apis,
-                "quality_metrics": quality_metrics.to_dict()
-                if quality_metrics
-                else None,
             }
 
         except Exception as e:
+            # Emit failure event
+            duration_ms = (time.time() - start_time) * 1000
+            event_manager.emit(Event(
+                type=EventType.INDEXING_FAILED,
+                timestamp=datetime.now(),
+                component="indexer",
+                description="API indexing failed",
+                error=str(e),
+                duration_ms=duration_ms,
+                success=False
+            ))
+            
             logger.error(f"Indexing failed: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            raise
+            logger.error(traceback.format_exc())
+            return {
+                "total_files": 0,
+                "total_endpoints": 0,
+                "failed_files": [],
+                "indexed_apis": [],
+                "error": str(e),
+            }
+
+    def _simplify_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Simplify metadata to be compatible with Pinecone.
+        
+        Args:
+            metadata: Original metadata
+            
+        Returns:
+            Simplified metadata with only simple types
+        """
+        simplified = {}
+        
+        # Copy simple fields
+        simplified["endpoint"] = metadata.get("endpoint", "")
+        simplified["method"] = metadata.get("method", "")
+        simplified["description"] = metadata.get("description", "")
+        
+        # Convert tags to comma-separated string
+        tags = metadata.get("tags", [])
+        simplified["tags"] = ",".join(str(tag) for tag in tags) if tags else ""
+        
+        # Extract parameter names and types
+        parameters = metadata.get("parameters", [])
+        param_names = []
+        param_types = []
+        for param in parameters:
+            if isinstance(param, dict):
+                param_names.append(param.get("name", ""))
+                param_types.append(param.get("in", ""))
+        simplified["parameter_names"] = ",".join(param_names)
+        simplified["parameter_types"] = ",".join(param_types)
+        
+        # Extract response codes
+        responses = metadata.get("responses", {})
+        response_codes = list(str(code) for code in responses.keys())
+        simplified["response_codes"] = ",".join(response_codes)
+        
+        return simplified
 
     def index_file(
-        self, data: Dict[str, Any], force: bool = False
+        self,
+        spec_data: Dict[str, Any],
+        force: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Index single API specification file.
+        """Index a single API specification file.
 
         Args:
-            data: API specification data
+            spec_data: OpenAPI specification data
             force: Whether to force reindexing
 
         Returns:
             List of indexed endpoints
         """
         try:
-            # Extract endpoints from spec
             endpoints = []
-            paths = data.get("paths", {})
-            if not isinstance(paths, dict):
-                logger.error("Invalid paths object in API spec")
-                return []
+            paths = spec_data.get("paths", {})
 
-            # Get API info
-            info = data.get("info", {})
-            if not isinstance(info, dict):
-                info = {}
-
-            api_name = info.get("title", "Unknown API")
-            api_version = info.get("version", "1.0.0")
-
-            # Get servers info for base path
-            servers = data.get("servers", [])
-            base_path = ""
-            if servers and isinstance(servers, list) and len(servers) > 0:
-                server = servers[0]
-                if isinstance(server, dict):
-                    base_path = server.get("url", "").rstrip("/")
-
-            # Process each path
             for path, path_data in paths.items():
-                try:
-                    if not isinstance(path_data, dict):
-                        logger.warning(f"Skipping invalid path data for {path}")
+                for method, endpoint_data in path_data.items():
+                    if not isinstance(endpoint_data, dict):
                         continue
 
-                    full_path = f"{base_path}{path}".rstrip("/")
+                    # Extract endpoint information
+                    description = endpoint_data.get("description", "")
+                    if not description:
+                        description = endpoint_data.get("summary", "")
 
-                    # Process each method
-                    for method, endpoint_data in path_data.items():
-                        try:
-                            # Skip non-HTTP method keys
-                            if method.upper() not in {
-                                "GET",
-                                "POST",
-                                "PUT",
-                                "DELETE",
-                                "PATCH",
-                            }:
-                                continue
+                    # Create endpoint metadata
+                    endpoint_metadata = {
+                        "endpoint": path,
+                        "method": method.upper(),
+                        "description": description,
+                        "tags": endpoint_data.get("tags", []),
+                        "parameters": endpoint_data.get("parameters", []),
+                        "responses": endpoint_data.get("responses", {}),
+                    }
 
-                            if not isinstance(endpoint_data, dict):
-                                logger.warning(
-                                    f"Skipping invalid endpoint data for {method} {path}"
-                                )
-                                continue
+                    # Create vector
+                    try:
+                        from ..search.vectorizer import Triple
+                        triple = Triple(
+                            endpoint=path,
+                            method=method.upper(),
+                            description=description
+                        )
+                        vector = self.vectorizer.vectorize(triple)
 
-                            # Handle $ref in endpoint data
-                            if "$ref" in endpoint_data:
-                                resolved_data = self._resolve_ref(endpoint_data, data)
-                                if resolved_data:
-                                    endpoint_data.update(resolved_data)
+                        # Create vector entry with simplified metadata
+                        vector_entry = {
+                            "id": f"{method.upper()}:{path}",
+                            "values": vector.tolist(),
+                            "metadata": self._simplify_metadata(endpoint_metadata),
+                        }
 
-                            # Merge path-level parameters with method-level parameters
-                            merged_data = endpoint_data.copy()
-                            if "parameters" in path_data:
-                                path_params = path_data["parameters"]
-                                method_params = endpoint_data.get("parameters", [])
-                                merged_data["parameters"] = path_params + method_params
+                        endpoints.append(vector_entry)
 
-                            # Create endpoint metadata
-                            endpoint = {
-                                "path": full_path,
-                                "method": method.upper(),
-                                "description": merged_data.get("description", ""),
-                                "summary": merged_data.get("summary", ""),
-                                "api_name": api_name,
-                                "api_version": api_version,
-                                "parameters": self._extract_parameters(
-                                    merged_data, data
-                                ),
-                                "responses": self._extract_responses(merged_data, data),
-                                "tags": merged_data.get("tags", []),
-                                "requires_auth": bool(merged_data.get("security", [])),
-                                "deprecated": merged_data.get("deprecated", False),
-                            }
+                    except Exception as e:
+                        logger.error(f"Failed to vectorize endpoint {path}: {e}")
+                        continue
 
-                            # Create unique ID
-                            endpoint_id = (
-                                f"{api_name}_{api_version}_{method}_{full_path}".lower()
-                                .replace("/", "_")
-                                .replace("{", "")
-                                .replace("}", "")
-                            )
-                            endpoint["id"] = endpoint_id
+            # Store vectors in batches
+            if endpoints:
+                self.client.upsert_vectors(endpoints)
 
-                            # Enrich endpoint with LLM-generated content
-                            try:
-                                enriched_endpoint = self.enricher.enrich_endpoint(endpoint)
-                                if "enriched" in enriched_endpoint:
-                                    # Serialize enriched data as JSON string
-                                    endpoint["enriched"] = json.dumps(
-                                        enriched_endpoint["enriched"]
-                                    )
-                                logger.info(
-                                    f"Enriched endpoint {method} {path} with LLM content"
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to enrich endpoint {method} {path}: {e}"
-                                )
-
-                            # Create vector representation
-                            vector = self.vectorizer.vectorize(
-                                endpoint=endpoint["path"],
-                                description=endpoint["description"] or endpoint["summary"] or "",
-                                example=None  # Optional example parameter
-                            )
-                            combined_vector = vector.to_combined_vector()
-
-                            # Check if exists and force flag
-                            if not force:
-                                try:
-                                    stats = self.client._verify_connection()
-                                    if endpoint_id in stats.get("vectors", {}).get(
-                                        "ids", []
-                                    ):
-                                        logger.debug(
-                                            f"Skipping existing endpoint: {endpoint_id}"
-                                        )
-                                        endpoints.append(endpoint)
-                                        continue
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Error checking existing endpoint: {e}"
-                                    )
-
-                            # Upsert to vector store
-                            try:
-                                # Ensure vector is a list
-                                vector_values = (
-                                    combined_vector
-                                    if isinstance(combined_vector, list)
-                                    else combined_vector.tolist()
-                                )
-
-                                self.client.upsert_vectors(
-                                    vectors=[
-                                        {
-                                            "id": endpoint_id,
-                                            "values": vector_values,
-                                            "metadata": endpoint,
-                                        }
-                                    ]
-                                )
-                                endpoints.append(endpoint)
-                                logger.info(
-                                    f"Successfully indexed endpoint {method} {path}"
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Error upserting endpoint {endpoint_id}: {e}"
-                                )
-                                logger.error(
-                                    f"Vector values type: {type(vector_values)}"
-                                )
-                                logger.error(
-                                    f"Vector values shape: {len(vector_values)}"
-                                )
-                                logger.error(
-                                    f"Endpoint metadata: {json.dumps(endpoint, indent=2)}"
-                                )
-
-                        except Exception as e:
-                            logger.error(
-                                f"Error processing endpoint {method} {path}: {e}"
-                            )
-                            logger.error(f"Traceback: {traceback.format_exc()}")
-
-                except Exception as e:
-                    logger.error(f"Error processing path {path}: {e}")
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-
-            logger.info(
-                f"Indexed {len(endpoints)} endpoints from {api_name} v{api_version}"
-            )
             return endpoints
 
         except Exception as e:
             logger.error(f"Failed to index file: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            raise
-
-    def _extract_parameters(self, endpoint_data: Dict, spec_data: Dict) -> List[str]:
-        """Extract parameter information from endpoint data.
-
-        Args:
-            endpoint_data: Endpoint specification data
-            spec_data: Full OpenAPI specification
-
-        Returns:
-            List of parameter descriptions
-        """
-        try:
-            parameters = []
-
-            # Handle OpenAPI 3.x parameters
-            for param in endpoint_data.get("parameters", []):
-                try:
-                    # Skip if not valid parameter
-                    if not isinstance(param, (dict, str)):
-                        continue
-
-                    # Resolve reference if needed
-                    if isinstance(param, str) or (
-                        isinstance(param, dict) and "$ref" in param
-                    ):
-                        resolved = self._resolve_ref(param, spec_data)
-                        if not resolved:
-                            continue
-                        param = resolved
-
-                    # Extract parameter info
-                    param_type = param.get("in", "query")
-                    param_name = param.get("name", "")
-                    param_desc = param.get("description", "")
-                    required = (
-                        "required" if param.get("required", False) else "optional"
-                    )
-
-                    # Handle schema
-                    schema = param.get("schema", {})
-                    if isinstance(schema, dict):
-                        # Resolve schema reference if needed
-                        if "$ref" in schema:
-                            resolved = self._resolve_ref(schema, spec_data)
-                            if resolved:
-                                schema = resolved
-
-                        param_data_type = schema.get("type", "string")
-                        parameters.append(
-                            f"{param_name}:{param_type}:{param_data_type}:{param_desc} ({required})"
-                        )
-
-                except Exception as e:
-                    logger.error(f"Error processing parameter: {e}")
-                    logger.error(f"Parameter data: {param}")
-                    continue
-
-            # Handle OpenAPI 3.x requestBody
-            try:
-                request_body = endpoint_data.get("requestBody", {})
-                if isinstance(request_body, (dict, str)):
-                    # Resolve reference if needed
-                    if isinstance(request_body, str) or (
-                        isinstance(request_body, dict) and "$ref" in request_body
-                    ):
-                        resolved = self._resolve_ref(request_body, spec_data)
-                        if resolved:
-                            request_body = resolved
-
-                    if isinstance(request_body, dict):
-                        content = request_body.get("content", {})
-                        if isinstance(content, dict):
-                            for content_type, content_schema in content.items():
-                                if not isinstance(content_schema, dict):
-                                    continue
-
-                                schema = content_schema.get("schema", {})
-                                if isinstance(schema, dict):
-                                    # Resolve schema reference if needed
-                                    if "$ref" in schema:
-                                        resolved = self._resolve_ref(schema, spec_data)
-                                        if resolved:
-                                            schema = resolved
-
-                                    if "properties" in schema:
-                                        for prop_name, prop in schema[
-                                            "properties"
-                                        ].items():
-                                            if not isinstance(prop, dict):
-                                                continue
-
-                                            prop_type = prop.get("type", "object")
-                                            prop_desc = prop.get("description", "")
-                                            parameters.append(
-                                                f"{prop_name}:body:{prop_type}:{prop_desc}"
-                                            )
-
-            except Exception as e:
-                logger.error(f"Error processing request body: {e}")
-                logger.error(f"Request body data: {request_body}")
-
-            return parameters
-
-        except Exception as e:
-            logger.error(f"Error extracting parameters: {e}")
-            logger.error(f"Endpoint data: {endpoint_data}")
-            return []
-
-    def _extract_responses(self, endpoint_data: Dict, spec_data: Dict) -> List[str]:
-        """Extract response information from endpoint data.
-
-        Args:
-            endpoint_data: Endpoint specification data
-            spec_data: Full OpenAPI specification
-
-        Returns:
-            List of response descriptions
-        """
-        try:
-            responses = []
-            for status_code, response in endpoint_data.get("responses", {}).items():
-                try:
-                    # Skip if not valid response
-                    if not isinstance(response, (dict, str)):
-                        continue
-
-                    # Resolve reference if needed
-                    if isinstance(response, str) or (
-                        isinstance(response, dict) and "$ref" in response
-                    ):
-                        resolved = self._resolve_ref(response, spec_data)
-                        if not resolved:
-                            continue
-                        response = resolved
-
-                    desc = response.get("description", "")
-
-                    # Handle OpenAPI 3.x response schema
-                    content = response.get("content", {})
-                    if isinstance(content, dict):
-                        for content_type, content_schema in content.items():
-                            if (
-                                isinstance(content_schema, dict)
-                                and "schema" in content_schema
-                            ):
-                                schema = content_schema["schema"]
-                                if isinstance(schema, dict):
-                                    # Resolve schema reference if needed
-                                    if "$ref" in schema:
-                                        resolved = self._resolve_ref(schema, spec_data)
-                                        if resolved:
-                                            schema = resolved
-
-                                    response_type = schema.get("type", "object")
-                                    desc = f"{desc} ({response_type})"
-                                    break
-
-                    responses.append(f"{status_code}: {desc}")
-
-                except Exception as e:
-                    logger.error(f"Error processing response {status_code}: {e}")
-                    logger.error(f"Response data: {response}")
-                    continue
-
-            return responses
-
-        except Exception as e:
-            logger.error(f"Error extracting responses: {e}")
-            logger.error(f"Endpoint data: {endpoint_data}")
+            logger.error(traceback.format_exc())
             return []

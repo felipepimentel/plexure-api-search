@@ -1,11 +1,14 @@
 """Advanced embedding generation with modern models and caching."""
 
+import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union, Tuple
+from datetime import datetime
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 from sklearn.decomposition import PCA
 from transformers import AutoTokenizer, AutoModel
 import torch
@@ -13,6 +16,7 @@ import torch.nn.functional as F
 
 from ..utils.cache import DiskCache
 from ..config import config_instance
+from ..monitoring.events import Event, EventType, event_manager
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +75,7 @@ class TripleVectorizer:
 
     def __init__(self):
         """Initialize the vectorizer with embedding models."""
-        self.embeddings = ModernEmbeddings()
+        self.embeddings = EmbeddingManager()
 
     def vectorize(
         self, endpoint: str, description: str, example: Optional[str] = None
@@ -161,172 +165,181 @@ class EmbeddingResult:
         return cls(**data)
 
 
-class ModernEmbeddings:
+class EmbeddingManager:
     """Modern embedding generation with advanced features."""
 
     def __init__(self, use_cache: bool = True):
-        """Initialize embedding models.
-
-        Args:
-            use_cache: Whether to use caching
-        """
+        """Initialize embedding models."""
         self.use_cache = use_cache
         
         # Initialize main bi-encoder
-        self.bi_encoder = SentenceTransformer(config_instance.bi_encoder_model)
+        event_manager.emit(Event(
+            type=EventType.MODEL_LOADING_STARTED,
+            timestamp=datetime.now(),
+            component="embeddings",
+            description=f"Loading bi-encoder model: {config_instance.bi_encoder_model}",
+            algorithm="sentence-transformers"
+        ))
+        try:
+            self.bi_encoder = SentenceTransformer(config_instance.bi_encoder_model)
+            # Verify model loaded correctly
+            test_embedding = self.bi_encoder.encode("test", convert_to_numpy=True)
+            if test_embedding is None or len(test_embedding) == 0:
+                raise ValueError("Bi-encoder model failed verification")
+            event_manager.emit(Event(
+                type=EventType.MODEL_LOADING_COMPLETED,
+                timestamp=datetime.now(),
+                component="embeddings",
+                description="Bi-encoder model loaded successfully",
+                algorithm="sentence-transformers"
+            ))
+        except Exception as e:
+            logger.error(f"Failed to load primary bi-encoder: {e}")
+            self.bi_encoder = None
         
         # Initialize fallback model
-        self.fallback_encoder = SentenceTransformer(config_instance.bi_encoder_fallback)
-        
-        # Initialize cross-encoder for reranking
-        self.cross_encoder = SentenceTransformer(config_instance.cross_encoder_model)
+        event_manager.emit(Event(
+            type=EventType.MODEL_LOADING_STARTED,
+            timestamp=datetime.now(),
+            component="embeddings",
+            description=f"Loading fallback model: {config_instance.bi_encoder_fallback}",
+            algorithm="sentence-transformers"
+        ))
+        try:
+            self.fallback_encoder = SentenceTransformer(config_instance.bi_encoder_fallback)
+            # Verify fallback model
+            test_embedding = self.fallback_encoder.encode("test", convert_to_numpy=True)
+            if test_embedding is None or len(test_embedding) == 0:
+                raise ValueError("Fallback model failed verification")
+            event_manager.emit(Event(
+                type=EventType.MODEL_LOADING_COMPLETED,
+                timestamp=datetime.now(),
+                component="embeddings",
+                description="Fallback model loaded successfully",
+                algorithm="sentence-transformers"
+            ))
+        except Exception as e:
+            logger.error(f"Failed to load fallback encoder: {e}")
+            self.fallback_encoder = None
         
         # Initialize multilingual model if needed
         self.multilingual_encoder = None
         if hasattr(config_instance, "multilingual_model"):
-            self.multilingual_encoder = SentenceTransformer(config_instance.multilingual_model)
-        
-        # Initialize PCA if enabled
-        self.pca = None
-        if config_instance.pca_enabled:
-            self.pca = PCA(n_components=config_instance.pca_components)
-            
-        # Set up pooling strategy
-        self.pooling_strategy = config_instance.pooling_strategy
+            event_manager.emit(Event(
+                type=EventType.MODEL_LOADING_STARTED,
+                timestamp=datetime.now(),
+                component="embeddings",
+                description=f"Loading multilingual model: {config_instance.multilingual_model}",
+                algorithm="sentence-transformers"
+            ))
+            try:
+                self.multilingual_encoder = SentenceTransformer(config_instance.multilingual_model)
+                # Verify multilingual model
+                test_embedding = self.multilingual_encoder.encode("test", convert_to_numpy=True)
+                if test_embedding is None or len(test_embedding) == 0:
+                    raise ValueError("Multilingual model failed verification")
+                event_manager.emit(Event(
+                    type=EventType.MODEL_LOADING_COMPLETED,
+                    timestamp=datetime.now(),
+                    component="embeddings",
+                    description="Multilingual model loaded successfully",
+                    algorithm="sentence-transformers"
+                ))
+            except Exception as e:
+                logger.error(f"Failed to load multilingual model: {e}")
+                self.multilingual_encoder = None
         
         # Initialize tokenizer for advanced processing
-        self.tokenizer = AutoTokenizer.from_pretrained(config_instance.bi_encoder_model)
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(config_instance.bi_encoder_model)
+        except Exception as e:
+            logger.error(f"Failed to load tokenizer: {e}")
+            self.tokenizer = None
+        
+        # Verify at least one model is available
+        if self.bi_encoder is None and self.fallback_encoder is None:
+            raise RuntimeError("No embedding models available - both primary and fallback failed to load")
         
         logger.info(f"Initialized embeddings with model: {config_instance.bi_encoder_model}")
 
-    def _mean_pooling(self, model_output: Any, attention_mask: Any) -> torch.Tensor:
-        """Perform mean pooling on token embeddings.
+    def get_embeddings(self, text: Union[str, List[str]]) -> np.ndarray:
+        """Get embeddings for text.
 
         Args:
-            model_output: Model's output
-            attention_mask: Attention mask for tokens
+            text: Input text or list of texts
 
         Returns:
-            Pooled embeddings
+            Vector embeddings
         """
-        token_embeddings = model_output[0]
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+        try:
+            # Handle empty input
+            if not text or (isinstance(text, list) and not text):
+                raise ValueError("Empty input text")
 
-    def _get_embedding(self, text: str, model: SentenceTransformer) -> np.ndarray:
-        """Get embedding from specified model with proper processing.
+            # Get model
+            model = self.bi_encoder or self.fallback_encoder
+            if not model:
+                raise ValueError("No embedding model available")
 
-        Args:
-            text: Input text
-            model: SentenceTransformer model to use
-
-        Returns:
-            Embedding vector
-        """
-        # Encode text
-        encoded = model.encode(
-            text,
-            convert_to_numpy=True,
-            normalize_embeddings=config_instance.normalize_embeddings,
-            show_progress_bar=False,
-        )
-        
-        # Ensure vector dimension matches configuration
-        if len(encoded) != config_instance.vector_dimension:
-            # If vector is too large, truncate it
-            if len(encoded) > config_instance.vector_dimension:
-                encoded = encoded[:config_instance.vector_dimension]
-            # If vector is too small, pad with zeros
-            else:
-                padding = np.zeros(config_instance.vector_dimension - len(encoded))
-                encoded = np.concatenate([encoded, padding])
-                
-        # Normalize final vector
-        if config_instance.normalize_embeddings:
-            encoded = encoded / np.linalg.norm(encoded)
+            # Convert single text to list for consistent handling
+            texts = [text] if isinstance(text, str) else text
             
-        return encoded
+            # Generate embeddings
+            embeddings = model.encode(
+                texts,
+                convert_to_numpy=True,
+                normalize_embeddings=config_instance.normalize_embeddings,
+                show_progress_bar=False
+            )
+            
+            # Handle empty results
+            if embeddings is None or (isinstance(embeddings, np.ndarray) and embeddings.size == 0):
+                raise ValueError("Model returned empty embeddings")
 
-    def get_embeddings(self, texts: Union[str, List[str]], retry_with_fallback: bool = True) -> Union[np.ndarray, List[np.ndarray]]:
-        """Generate embeddings for one or more texts.
+            # Convert back to single vector if input was single text
+            if isinstance(text, str):
+                embeddings = embeddings[0]
 
-        Args:
-            texts: Input text or list of texts
-            retry_with_fallback: Whether to retry with fallback model on failure
+            return embeddings
 
-        Returns:
-            Single embedding vector or list of vectors
-        """
-        single_input = isinstance(texts, str)
-        texts_list = [texts] if single_input else texts
-        
-        results = []
-        for text in texts_list:
-            try:
-                # Check cache first
-                if self.use_cache:
-                    cache_key = f"emb:{text}"
-                    cached = embedding_cache.get(cache_key)
-                    if cached is not None:
-                        results.append(cached)
-                        continue
-                
-                # Generate embedding with main model
-                vector = self._get_embedding(text, self.bi_encoder)
-                
-                # Cache result
-                if self.use_cache:
-                    embedding_cache.set(cache_key, vector)
-                
-                results.append(vector)
-                
-            except Exception as e:
-                logger.error(f"Error generating embedding: {e}")
-                if retry_with_fallback:
-                    try:
-                        # Try fallback model
-                        logger.info("Retrying with fallback model")
-                        vector = self._get_embedding(text, self.fallback_encoder)
-                        results.append(vector)
-                    except Exception as e2:
-                        logger.error(f"Fallback model also failed: {e2}")
-                        raise
-                else:
-                    raise
-        
-        return results[0] if single_input else results
+        except Exception as e:
+            logger.error(f"Failed to get embeddings: {e}")
+            raise
 
-    def compute_similarity(self, text1: str, text2: str, strategy: str = "cross_encoder") -> float:
+    def compute_similarity(self, text1: str, text2: str, strategy: str = "bi_encoder") -> float:
         """Compute similarity between two texts.
 
         Args:
             text1: First text
             text2: Second text
-            strategy: Similarity strategy ('cross_encoder' or 'bi_encoder')
+            strategy: Similarity strategy (only 'bi_encoder' supported)
 
         Returns:
             Similarity score between 0 and 1
         """
         try:
-            if strategy == "cross_encoder":
-                # Use cross-encoder for more accurate similarity
-                score = self.cross_encoder.predict([(text1, text2)])
-                # Normalize to 0-1 range
-                return float((1 + score) / 2)
-            else:  # bi_encoder
-                # Get embeddings
-                vec1, vec2 = self.get_embeddings([text1, text2])
-                # Compute cosine similarity
-                similarity = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-                return float(similarity)
+            # Get embeddings using bi-encoder
+            model = self.bi_encoder or self.fallback_encoder
+            if not model:
+                raise ValueError("No embedding model available")
+                
+            embedding1 = model.encode(text1, convert_to_numpy=True)
+            embedding2 = model.encode(text2, convert_to_numpy=True)
+            
+            # Compute cosine similarity
+            similarity = np.dot(embedding1, embedding2) / (
+                np.linalg.norm(embedding1) * np.linalg.norm(embedding2)
+            )
+            # Ensure score is between 0 and 1
+            return float(max(0.0, min(1.0, (similarity + 1) / 2)))
         except Exception as e:
             logger.error(f"Failed to compute similarity: {e}")
-            raise
+            return 0.0
 
     def rerank_results(
         self, query: str, results: List[Dict[str, Any]], top_k: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Rerank search results using cross-encoder.
+        """Rerank search results using bi-encoder.
 
         Args:
             query: Search query
@@ -340,20 +353,45 @@ class ModernEmbeddings:
             if not results:
                 return results
 
-            # Create text pairs for scoring
-            pairs = [(query, result.get("description", "")) for result in results]
+            # Get query embedding using bi-encoder
+            model = self.bi_encoder or self.fallback_encoder
+            if not model:
+                return results
+                
+            query_embedding = model.encode(query, convert_to_numpy=True)
 
-            # Get cross-encoder scores
-            scores = self.cross_encoder.predict(pairs)
+            # Get result embeddings and compute scores
+            scored_results = []
+            for result in results:
+                try:
+                    # Get result text
+                    result_text = result.get("description", "")
+                    if not result_text:
+                        continue
+                        
+                    # Get result embedding
+                    result_embedding = model.encode(result_text, convert_to_numpy=True)
+                    
+                    # Compute similarity
+                    score = np.dot(query_embedding, result_embedding) / (
+                        np.linalg.norm(query_embedding) * np.linalg.norm(result_embedding)
+                    )
+                    
+                    # Normalize score to 0-1
+                    score = float(max(0.0, min(1.0, (score + 1) / 2)))
+                    
+                    scored_results.append((result, score))
+                except Exception as e:
+                    logger.error(f"Failed to score result: {e}")
+                    continue
 
             # Sort by score
-            scored_results = list(zip(results, scores))
             reranked = sorted(scored_results, key=lambda x: x[1], reverse=True)
 
             # Update scores and limit results
             final_results = []
             for i, (result, score) in enumerate(reranked[:top_k]):
-                result["score"] = float((1 + score) / 2)  # Normalize to 0-1
+                result["score"] = score
                 result["rank"] = i + 1
                 final_results.append(result)
 
@@ -361,24 +399,10 @@ class ModernEmbeddings:
 
         except Exception as e:
             logger.error(f"Failed to rerank results: {e}")
-            raise
-
-    def get_multilingual_embeddings(self, text: str) -> np.ndarray:
-        """Generate multilingual embeddings if supported.
-
-        Args:
-            text: Input text
-
-        Returns:
-            Multilingual embedding vector
-        """
-        if not self.multilingual_encoder:
-            raise ValueError("Multilingual model not initialized")
-            
-        return self._get_embedding(text, self.multilingual_encoder)
+            return results
 
 
 # Global embeddings instance
-embeddings = ModernEmbeddings()
+embeddings = EmbeddingManager()
 
-__all__ = ["embeddings", "EmbeddingResult", "ModernEmbeddings"]
+__all__ = ["embeddings", "EmbeddingResult", "EmbeddingManager"]
