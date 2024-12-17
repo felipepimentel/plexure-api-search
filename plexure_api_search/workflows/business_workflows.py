@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Set
 import logging
 
 from ..config import config_instance
-from ..monitoring import metrics_manager
+from ..monitoring.metrics_manager import metrics_manager
 from ..analytics.usage_analytics import BusinessTrend, UsageMetrics
 from ..recommendations.business_recommendations import BusinessOpportunity
 

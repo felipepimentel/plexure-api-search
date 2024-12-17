@@ -16,7 +16,7 @@ from .boosting import ContextualBooster, BusinessContext, BusinessValue
 from .quality import QualityMetrics
 from .search_models import SearchResult
 from .understanding import ZeroShotUnderstanding
-from ..monitoring import metrics_manager
+from ..monitoring.metrics_manager import metrics_manager
 from ..monitoring.events import Event, EventType, event_manager
 from .vectorizer import TripleVectorizer, Triple
 

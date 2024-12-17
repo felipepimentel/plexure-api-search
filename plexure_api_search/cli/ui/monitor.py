@@ -1,16 +1,65 @@
 """Monitor UI components."""
 
 from datetime import datetime
-from typing import List
+from typing import Dict, Optional
 
 from rich import box
-from rich.console import Group
+from rich.console import Group, Console
 from rich.layout import Layout
+from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
 from ...monitoring.events import Event, EventType, event_manager
+
+
+class MonitorUI:
+    """Monitor UI with live event updates."""
+    
+    def __init__(self, layout: Layout, live: Live, interval: int):
+        """Initialize monitor UI.
+        
+        Args:
+            layout: Rich layout instance
+            live: Rich live display instance
+            interval: Update interval for non-event updates
+        """
+        self.layout = layout
+        self.live = live
+        self.interval = interval
+        self._last_update = datetime.now()
+        
+        # Subscribe to events
+        event_manager.subscribe(self._handle_event)
+        
+    def _handle_event(self, event: Event) -> None:
+        """Handle incoming events and update UI."""
+        try:
+            # Skip monitoring updates to avoid recursion
+            if event.type == EventType.MONITORING_UPDATED:
+                return
+                
+            # Update all panels
+            self.update_all()
+            
+        except Exception as e:
+            # Log error but don't crash
+            Console().print(f"[red]Error updating UI:[/red] {e}")
+    
+    def update_all(self) -> None:
+        """Update all UI panels."""
+        try:
+            self.layout["header"].update(make_header(self.interval))
+            self.layout["metrics"].update(make_metrics_panel())
+            self.layout["events"].update(make_events_panel())
+            self.layout["errors"].update(make_error_panel())
+            
+            # Force live display refresh
+            self.live.refresh()
+            
+        except Exception as e:
+            Console().print(f"[red]Error updating panels:[/red] {e}")
 
 
 def make_header(interval: int) -> Panel:
@@ -89,8 +138,13 @@ def make_header(interval: int) -> Panel:
 
 def make_metrics_panel() -> Panel:
     """Create metrics panel with current stats."""
-    events = [e for e in event_manager.get_recent_events() 
-             if e.type != EventType.MONITORING_UPDATED]  # Filter out monitoring updates
+    # Get events and sort by timestamp in reverse order
+    events = sorted(
+        [e for e in event_manager.get_recent_events() 
+         if e.type != EventType.MONITORING_UPDATED],  # Filter out monitoring updates
+        key=lambda e: e.timestamp,
+        reverse=True
+    )
     
     metrics_table = Table(
         show_header=True,
@@ -102,19 +156,51 @@ def make_metrics_panel() -> Panel:
     
     metrics_table.add_column("📊 Metric", style="cyan", no_wrap=True)
     metrics_table.add_column("Value", style="green", justify="right", no_wrap=True)
+    metrics_table.add_column("Last Update", style="dim", justify="right", width=8)
     
-    # Add core metrics with icons
-    metrics = {
-        "📈 Total Events": len(events),
-        "🔍 Search Events": len([e for e in events if e.type == EventType.SEARCH_STARTED]),
-        "❌ Error Events": len([e for e in events if not e.success]),
-        "💾 Cache Hit Rate": f"{event_manager.get_cache_hit_rate():.2%}",
-        "⚡ Avg Search Time": f"{event_manager.get_average_search_time():.3f}s",
-        "🤖 Active Models": event_manager.get_active_model_count(),
-    }
+    # Add core metrics with icons and timestamps
+    metrics = [
+        (
+            "📈 Total Events",
+            str(len(events)),
+            events[0].timestamp if events else datetime.now()
+        ),
+        (
+            "🔍 Search Events",
+            str(len([e for e in events if e.type == EventType.SEARCH_STARTED])),
+            next((e.timestamp for e in events if e.type == EventType.SEARCH_STARTED), None)
+        ),
+        (
+            "❌ Error Events",
+            str(len([e for e in events if not e.success])),
+            next((e.timestamp for e in events if not e.success), None)
+        ),
+        (
+            "💾 Cache Hit Rate",
+            f"{event_manager.get_cache_hit_rate():.2%}",
+            next((e.timestamp for e in events if e.type in (EventType.CACHE_HIT, EventType.CACHE_MISS)), None)
+        ),
+        (
+            "⚡ Avg Search Time",
+            f"{event_manager.get_average_search_time():.3f}s",
+            next((e.timestamp for e in events if e.type == EventType.SEARCH_COMPLETED), None)
+        ),
+        (
+            "🤖 Active Models",
+            str(event_manager.get_active_model_count()),
+            next((e.timestamp for e in events if e.type == EventType.MODEL_LOADING_COMPLETED), None)
+        ),
+    ]
     
-    for metric, value in metrics.items():
-        metrics_table.add_row(metric, str(value))
+    # Sort metrics by most recent timestamp
+    metrics.sort(key=lambda x: x[2] if x[2] else datetime.min, reverse=True)
+    
+    for metric, value, timestamp in metrics:
+        metrics_table.add_row(
+            metric,
+            value,
+            timestamp.strftime("%H:%M:%S") if timestamp else "-"
+        )
         
     return Panel(
         metrics_table,

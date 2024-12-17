@@ -7,7 +7,7 @@ import logging
 import numpy as np
 
 from ..config import config_instance
-from ..monitoring import metrics_manager
+from ..monitoring.metrics_manager import metrics_manager
 
 logger = logging.getLogger(__name__)
 

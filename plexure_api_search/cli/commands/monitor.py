@@ -11,6 +11,7 @@ from rich.live import Live
 from ...monitoring.events import Event, EventType, event_manager
 from ..ui.logging import setup_logging
 from ..ui.monitor import (
+    MonitorUI,
     make_header,
     make_metrics_panel,
     make_events_panel,
@@ -51,22 +52,23 @@ def monitor(verbose: int, interval: int, hot_reload: bool) -> None:
         # Start live display
         with Live(layout, refresh_per_second=1/interval, screen=True) as live:
             try:
+                # Initialize monitor UI with event subscription
+                monitor_ui = MonitorUI(layout, live, interval)
+                
+                # Initial update
+                monitor_ui.update_all()
+                
                 while True:
-                    # Update all panels
-                    layout["header"].update(make_header(interval))
-                    layout["metrics"].update(make_metrics_panel())
-                    layout["events"].update(make_events_panel())
-                    layout["errors"].update(make_error_panel())
+                    # Sleep for interval
+                    time.sleep(interval)
                     
-                    # Emit monitoring update event (but don't show in events panel)
+                    # Emit monitoring update event
                     event_manager.emit(Event(
                         type=EventType.MONITORING_UPDATED,
                         timestamp=datetime.now(),
                         component="monitoring",
                         description="Updated monitoring display"
                     ))
-                    
-                    time.sleep(interval)
                     
             except KeyboardInterrupt:
                 event_manager.stop_monitoring()

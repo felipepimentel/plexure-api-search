@@ -11,7 +11,7 @@ import numpy as np
 
 from ..config import config_instance
 from .search_models import SearchContext, WeightProfile
-from ..monitoring import metrics_manager
+from ..monitoring.metrics_manager import metrics_manager
 
 
 class BusinessValue(Enum):

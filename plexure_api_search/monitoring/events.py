@@ -1,11 +1,16 @@
 """Event system for tracking processing steps."""
 
-from dataclasses import dataclass
+import logging
+import threading
+import weakref
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 import statistics
+import queue
 
+logger = logging.getLogger(__name__)
 
 class EventType(Enum):
     """Types of events that can be emitted."""
@@ -61,7 +66,7 @@ class Event:
     duration_ms: Optional[float] = None
     success: bool = True
     error: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
     algorithm: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -80,78 +85,116 @@ class Event:
 
 
 class EventManager:
-    """Manages event subscriptions and progress tracking."""
+    """Manages event subscriptions and progress tracking with thread safety."""
     
-    def __init__(self):
-        """Initialize event manager."""
-        self._subscribers: List[Callable[[Event], None]] = []
-        self._progress: Dict[str, Dict[str, Any]] = {}
-        self._events: List[Event] = []  # Store recent events
-        self._max_events = 1000  # Maximum number of events to store
-        self._monitoring_start_time = None
+    def __init__(self, max_events: int = 1000, max_queue_size: int = 1000):
+        """Initialize event manager.
+        
+        Args:
+            max_events: Maximum number of events to store in history
+            max_queue_size: Maximum size of event queue
+        """
+        self._subscribers: Set[int] = set()  # Store subscriber IDs
+        self._subscriber_callbacks: Dict[int, Callable[[Event], None]] = {}
+        self._events: List[Event] = []
+        self._max_events = max_events
+        self._monitoring_start_time: Optional[datetime] = None
+        
+        # Thread safety
+        self._lock = threading.RLock()
+        self._event_queue = queue.Queue(maxsize=max_queue_size)
+        self._worker_thread: Optional[threading.Thread] = None
+        self._running = False
+        
+        # Start event processing thread
+        self._start_worker()
     
-    def subscribe(self, callback: Callable[[Event], None]) -> None:
-        """Subscribe to events."""
-        if callback not in self._subscribers:
-            self._subscribers.append(callback)
+    def _start_worker(self) -> None:
+        """Start the event processing worker thread."""
+        if self._worker_thread is not None:
+            return
+            
+        self._running = True
+        self._worker_thread = threading.Thread(
+            target=self._process_events,
+            name="EventProcessor",
+            daemon=True
+        )
+        self._worker_thread.start()
+    
+    def _process_events(self) -> None:
+        """Process events from queue and notify subscribers."""
+        while self._running:
+            try:
+                event = self._event_queue.get(timeout=0.1)
+                self._handle_event(event)
+                self._event_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Error processing event: {e}")
+    
+    def _handle_event(self, event: Event) -> None:
+        """Handle a single event."""
+        with self._lock:
+            # Store event
+            self._events.append(event)
+            if len(self._events) > self._max_events:
+                self._events = self._events[-self._max_events:]
+            
+            # Notify subscribers
+            dead_subscribers = set()
+            for subscriber_id, callback in self._subscriber_callbacks.items():
+                try:
+                    callback(event)
+                except Exception as e:
+                    logger.error(f"Error in subscriber {subscriber_id}: {e}")
+                    dead_subscribers.add(subscriber_id)
+            
+            # Clean up dead subscribers
+            for subscriber_id in dead_subscribers:
+                self._unsubscribe_by_id(subscriber_id)
+    
+    def subscribe(self, callback: Callable[[Event], None]) -> int:
+        """Subscribe to events.
+        
+        Args:
+            callback: Function to call when events occur
+            
+        Returns:
+            Subscriber ID for unsubscribing
+        """
+        with self._lock:
+            subscriber_id = id(callback)
+            self._subscribers.add(subscriber_id)
+            self._subscriber_callbacks[subscriber_id] = callback
+            return subscriber_id
     
     def unsubscribe(self, callback: Callable[[Event], None]) -> None:
-        """Unsubscribe from events."""
-        if callback in self._subscribers:
-            self._subscribers.remove(callback)
+        """Unsubscribe from events.
+        
+        Args:
+            callback: Previously subscribed callback function
+        """
+        subscriber_id = id(callback)
+        self._unsubscribe_by_id(subscriber_id)
+    
+    def _unsubscribe_by_id(self, subscriber_id: int) -> None:
+        """Unsubscribe using subscriber ID."""
+        with self._lock:
+            self._subscribers.discard(subscriber_id)
+            self._subscriber_callbacks.pop(subscriber_id, None)
     
     def emit(self, event: Event) -> None:
-        """Emit an event to all subscribers."""
-        # Store event
-        self._events.append(event)
+        """Emit an event to all subscribers.
         
-        # Trim old events if needed
-        if len(self._events) > self._max_events:
-            self._events = self._events[-self._max_events:]
-        
-        # Update progress tracking
-        self._update_progress(event)
-        
-        # Notify subscribers
-        for subscriber in self._subscribers:
-            try:
-                subscriber(event)
-            except Exception as e:
-                print(f"Error in event subscriber: {e}")
-    
-    def _update_progress(self, event: Event) -> None:
-        """Update progress tracking based on event."""
-        component = event.component
-        
-        # Initialize component status if needed
-        if component not in self._progress:
-            self._progress[component] = {
-                "status": "unknown",
-                "last_event": None,
-                "error": None,
-                "progress": 0.0,
-            }
-        
-        # Update status based on event type
-        if event.type.name.endswith("_STARTED"):
-            self._progress[component]["status"] = "in_progress"
-        elif event.type.name.endswith("_COMPLETED"):
-            self._progress[component]["status"] = "completed"
-            self._progress[component]["progress"] = 100.0
-        elif event.type.name.endswith("_FAILED"):
-            self._progress[component]["status"] = "error"
-            self._progress[component]["error"] = event.error
-        
-        # Update progress if provided in metadata
-        if event.metadata and "progress" in event.metadata:
-            self._progress[component]["progress"] = float(event.metadata["progress"])
-        
-        # Update last event
-        self._progress[component]["last_event"] = event.timestamp.isoformat()
-    
-    def get_progress(self) -> Dict[str, Dict[str, Any]]:
-        """Get current progress status for all components."""
-        return self._progress.copy()
+        Args:
+            event: Event to emit
+        """
+        try:
+            self._event_queue.put(event, timeout=1.0)
+        except queue.Full:
+            logger.error("Event queue full, dropping event")
     
     def get_recent_events(self, minutes: int = 5) -> List[Event]:
         """Get events from the last N minutes.
@@ -162,8 +205,9 @@ class EventManager:
         Returns:
             List of recent events
         """
-        cutoff = datetime.now() - timedelta(minutes=minutes)
-        return [e for e in self._events if e.timestamp >= cutoff]
+        with self._lock:
+            cutoff = datetime.now() - timedelta(minutes=minutes)
+            return [e for e in self._events if e.timestamp >= cutoff]
     
     def get_cache_hit_rate(self) -> float:
         """Calculate cache hit rate from recent events.
@@ -212,27 +256,35 @@ class EventManager:
     
     def start_monitoring(self) -> None:
         """Start monitoring session."""
-        self._monitoring_start_time = datetime.now()
-        self.emit(Event(
-            type=EventType.MONITORING_STARTED,
-            timestamp=datetime.now(),
-            component="monitoring",
-            description="Started monitoring session"
-        ))
+        with self._lock:
+            self._monitoring_start_time = datetime.now()
+            self.emit(Event(
+                type=EventType.MONITORING_STARTED,
+                timestamp=datetime.now(),
+                component="monitoring",
+                description="Started monitoring session"
+            ))
     
     def stop_monitoring(self) -> None:
         """Stop monitoring session."""
-        if self._monitoring_start_time:
-            duration = (datetime.now() - self._monitoring_start_time).total_seconds()
-            self.emit(Event(
-                type=EventType.MONITORING_STOPPED,
-                timestamp=datetime.now(),
-                component="monitoring",
-                description="Stopped monitoring session",
-                duration_ms=duration * 1000,
-                metadata={"session_duration": duration}
-            ))
-            self._monitoring_start_time = None
+        with self._lock:
+            if self._monitoring_start_time:
+                duration = (datetime.now() - self._monitoring_start_time).total_seconds()
+                self.emit(Event(
+                    type=EventType.MONITORING_STOPPED,
+                    timestamp=datetime.now(),
+                    component="monitoring",
+                    description="Stopped monitoring session",
+                    duration_ms=duration * 1000,
+                    metadata={"session_duration": duration}
+                ))
+                self._monitoring_start_time = None
+            
+            # Stop worker thread
+            self._running = False
+            if self._worker_thread:
+                self._worker_thread.join(timeout=1.0)
+                self._worker_thread = None
 
 
 # Global event manager instance
