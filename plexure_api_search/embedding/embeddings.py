@@ -284,6 +284,16 @@ class EmbeddingManager:
             # Convert single text to list for consistent handling
             texts = [text] if isinstance(text, str) else text
             
+            event_manager.emit(Event(
+                type=EventType.EMBEDDING_STARTED,
+                timestamp=datetime.now(),
+                component="embeddings",
+                description=f"Generating embeddings for {len(texts)} texts",
+                metadata={"text_count": len(texts)}
+            ))
+            
+            start_time = time.time()
+            
             # Generate embeddings
             embeddings = model.encode(
                 texts,
@@ -292,6 +302,8 @@ class EmbeddingManager:
                 show_progress_bar=False
             )
             
+            duration_ms = (time.time() - start_time) * 1000
+            
             # Handle empty results
             if embeddings is None or (isinstance(embeddings, np.ndarray) and embeddings.size == 0):
                 raise ValueError("Model returned empty embeddings")
@@ -299,11 +311,32 @@ class EmbeddingManager:
             # Convert back to single vector if input was single text
             if isinstance(text, str):
                 embeddings = embeddings[0]
+            
+            event_manager.emit(Event(
+                type=EventType.EMBEDDING_COMPLETED,
+                timestamp=datetime.now(),
+                component="embeddings",
+                description=f"Generated embeddings successfully",
+                duration_ms=duration_ms,
+                metadata={
+                    "text_count": len(texts),
+                    "embedding_dim": embeddings.shape[-1] if isinstance(embeddings, np.ndarray) else len(embeddings),
+                    "normalized": config_instance.normalize_embeddings
+                }
+            ))
 
             return embeddings
 
         except Exception as e:
             logger.error(f"Failed to get embeddings: {e}")
+            event_manager.emit(Event(
+                type=EventType.EMBEDDING_FAILED,
+                timestamp=datetime.now(),
+                component="embeddings",
+                description="Failed to generate embeddings",
+                error=str(e),
+                success=False
+            ))
             raise
 
     def compute_similarity(self, text1: str, text2: str, strategy: str = "bi_encoder") -> float:
@@ -318,6 +351,16 @@ class EmbeddingManager:
             Similarity score between 0 and 1
         """
         try:
+            event_manager.emit(Event(
+                type=EventType.EMBEDDING_STARTED,
+                timestamp=datetime.now(),
+                component="embeddings",
+                description="Computing text similarity",
+                metadata={"strategy": strategy}
+            ))
+            
+            start_time = time.time()
+            
             # Get embeddings using bi-encoder
             model = self.bi_encoder or self.fallback_encoder
             if not model:
@@ -330,10 +373,37 @@ class EmbeddingManager:
             similarity = np.dot(embedding1, embedding2) / (
                 np.linalg.norm(embedding1) * np.linalg.norm(embedding2)
             )
+            
             # Ensure score is between 0 and 1
-            return float(max(0.0, min(1.0, (similarity + 1) / 2)))
+            score = float(max(0.0, min(1.0, (similarity + 1) / 2)))
+            
+            duration_ms = (time.time() - start_time) * 1000
+            
+            event_manager.emit(Event(
+                type=EventType.EMBEDDING_COMPLETED,
+                timestamp=datetime.now(),
+                component="embeddings",
+                description="Computed similarity successfully",
+                duration_ms=duration_ms,
+                metadata={
+                    "strategy": strategy,
+                    "similarity_score": score
+                }
+            ))
+            
+            return score
+            
         except Exception as e:
             logger.error(f"Failed to compute similarity: {e}")
+            event_manager.emit(Event(
+                type=EventType.EMBEDDING_FAILED,
+                timestamp=datetime.now(),
+                component="embeddings",
+                description="Failed to compute similarity",
+                error=str(e),
+                success=False,
+                metadata={"strategy": strategy}
+            ))
             return 0.0
 
     def rerank_results(

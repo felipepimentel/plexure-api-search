@@ -94,48 +94,116 @@ def search(query: str, verbose: int, limit: int, threshold: float) -> None:
         searcher = APISearcher()
         understanding = ZeroShotUnderstanding()
         
-        # Process query
-        query_intent = understanding.classify_intent(query)
+        # Emit search started event
+        start_time = time.time()
+        event_manager.emit(Event(
+            type=EventType.SEARCH_STARTED,
+            timestamp=datetime.now(),
+            component="search",
+            description=f"Starting search for query: {query}"
+        ))
         
-        # Perform search
-        results = searcher.search(
-            query=query,
-            filters={"score_threshold": threshold} if threshold else None,
-            include_metadata=True,
-            enhance_results=True
-        )
-        
-        # Display results
-        if not results:
-            console.print("\n[yellow]No matching endpoints found.[/yellow]")
-            return
+        try:
+            # Process query
+            query_intent = understanding.classify_intent(query)
+            event_manager.emit(Event(
+                type=EventType.SEARCH_QUERY_PROCESSED,
+                timestamp=datetime.now(),
+                component="search",
+                description=f"Query intent: {query_intent}",
+                metadata={"intent": query_intent}
+            ))
             
-        # Create results table
-        table = Table(
-            title=f"\nSearch Results for: [cyan]{query}[/cyan]",
-            box=box.ROUNDED,
-            show_header=True,
-            header_style="bold magenta",
-        )
-        
-        table.add_column("Score", justify="right", style="cyan", no_wrap=True)
-        table.add_column("Method", style="green")
-        table.add_column("Endpoint", style="blue")
-        table.add_column("Description", style="white")
-        
-        for result in results:
-            table.add_row(
-                f"{result.get('score', 0.0):.2f}",
-                result.get('method', ''),
-                result.get('endpoint', ''),
-                result.get('description', '')
+            # Perform search
+            results = searcher.search(
+                query=query,
+                filters={"score_threshold": threshold} if threshold else None,
+                include_metadata=True,
+                enhance_results=True
             )
-        
-        console.print(table)
-        
-        # Show query intent if verbose
-        if verbose > 0:
-            console.print(f"[dim]Detected intent:[/dim] {query_intent}")
+            
+            # Calculate search duration
+            duration_ms = (time.time() - start_time) * 1000
+            
+            if results:
+                event_manager.emit(Event(
+                    type=EventType.SEARCH_RESULTS_FOUND,
+                    timestamp=datetime.now(),
+                    component="search",
+                    description=f"Found {len(results)} results",
+                    duration_ms=duration_ms,
+                    metadata={
+                        "result_count": len(results),
+                        "top_score": max(r.get("score", 0) for r in results)
+                    }
+                ))
+            else:
+                event_manager.emit(Event(
+                    type=EventType.SEARCH_COMPLETED,
+                    timestamp=datetime.now(),
+                    component="search",
+                    description="No matching endpoints found",
+                    duration_ms=duration_ms,
+                    metadata={"result_count": 0}
+                ))
+                console.print("\n[yellow]No matching endpoints found.[/yellow]")
+                return
+            
+            # Display results
+            table = Table(
+                title=f"\nSearch Results for: [cyan]{query}[/cyan]",
+                box=box.ROUNDED,
+                show_header=True,
+                header_style="bold magenta",
+            )
+            
+            table.add_column("Score", justify="right", style="cyan", no_wrap=True)
+            table.add_column("Method", style="green")
+            table.add_column("Endpoint", style="blue")
+            table.add_column("Description", style="white")
+            
+            for result in results:
+                table.add_row(
+                    f"{result.get('score', 0.0):.2f}",
+                    result.get('method', ''),
+                    result.get('endpoint', ''),
+                    result.get('description', '')
+                )
+            
+            console.print(table)
+            
+            # Show query intent if verbose
+            if verbose > 0:
+                console.print(f"[dim]Detected intent:[/dim] {query_intent}")
+            
+            # Emit final success event
+            event_manager.emit(Event(
+                type=EventType.SEARCH_COMPLETED,
+                timestamp=datetime.now(),
+                component="search",
+                description="Search completed successfully",
+                duration_ms=duration_ms,
+                success=True,
+                metadata={
+                    "query": query,
+                    "result_count": len(results),
+                    "duration_ms": duration_ms,
+                    "intent": query_intent
+                }
+            ))
+            
+        except Exception as e:
+            # Emit error event
+            event_manager.emit(Event(
+                type=EventType.SEARCH_FAILED,
+                timestamp=datetime.now(),
+                component="search",
+                description=f"Search failed: {str(e)}",
+                success=False,
+                error=str(e),
+                metadata={"query": query}
+            ))
+            raise
         
     except Exception as e:
         console.print(f"\n[red]Error:[/red] {str(e)}")
@@ -210,6 +278,79 @@ def monitor(verbose: int, interval: int) -> None:
         event_manager.start_monitoring()
         last_update = datetime.now()
         
+        def make_header() -> Panel:
+            """Create enhanced header with system information."""
+            now = datetime.now()
+            uptime = (now - event_manager._monitoring_start_time).total_seconds()
+            
+            # Create header grid
+            grid = Table.grid(padding=(0, 1), expand=True)
+            grid.add_column(ratio=1, justify="left")
+            grid.add_column(ratio=1, justify="center")
+            grid.add_column(ratio=1, justify="right")
+            
+            # Left section - System Info
+            left_text = Text()
+            left_text.append("🔍 ", style="bold green")
+            left_text.append("Plexure API Search", style="bold green")
+            
+            # Center section - Monitoring Info
+            center_text = Text()
+            center_text.append("⚡ ", style="bold yellow")
+            center_text.append(f"Refresh: {interval}s", style="bold yellow")
+            center_text.append(" | ", style="dim")
+            center_text.append("Uptime: ", style="dim")
+            center_text.append(f"{int(uptime)}s", style="bold white")
+            
+            # Right section - Time Info
+            right_text = Text()
+            right_text.append("🕒 ", style="bold blue")
+            right_text.append(now.strftime("%H:%M:%S"), style="bold blue")
+            right_text.append(" | ", style="dim")
+            right_text.append(now.strftime("%Y-%m-%d"), style="white")
+            
+            # Add sections to grid
+            grid.add_row(left_text, center_text, right_text)
+            
+            # Create status bar
+            status_grid = Table.grid(padding=(0, 1), expand=True)
+            status_grid.add_column(ratio=1, justify="left")
+            status_grid.add_column(ratio=1, justify="right")
+            
+            # Status info
+            status_text = Text()
+            status_text.append("Status: ", style="dim")
+            status_text.append("[green]Active[/green]")
+            status_text.append(" | ", style="dim")
+            status_text.append("Press ", style="dim")
+            status_text.append("[bold]Ctrl+C[/bold]", style="white")
+            status_text.append(" to exit", style="dim")
+            
+            # System info
+            system_text = Text()
+            system_text.append("Memory: ", style="dim")
+            system_text.append("[cyan]Active[/cyan]")
+            system_text.append(" | ", style="dim")
+            system_text.append("CPU: ", style="dim")
+            system_text.append("[cyan]Normal[/cyan]")
+            
+            status_grid.add_row(status_text, system_text)
+            
+            # Combine grids in a group
+            header_content = Group(
+                grid,
+                Text(),  # Spacer
+                status_grid
+            )
+            
+            return Panel(
+                header_content,
+                border_style="blue",
+                title="[bold white]System Monitor[/bold white]",
+                padding=(0, 1),
+                expand=True
+            )
+        
         def make_metrics_panel() -> Panel:
             """Create metrics panel with current stats."""
             events = [e for e in event_manager.get_recent_events() 
@@ -219,28 +360,34 @@ def monitor(verbose: int, interval: int) -> None:
                 show_header=True,
                 header_style="bold magenta",
                 box=box.ROUNDED,
-                title="System Metrics",
                 padding=(0, 1),
                 expand=True
             )
             
-            metrics_table.add_column("Metric", style="cyan")
-            metrics_table.add_column("Value", style="green", justify="right")
+            metrics_table.add_column("📊 Metric", style="cyan", no_wrap=True)
+            metrics_table.add_column("Value", style="green", justify="right", no_wrap=True)
             
-            # Add core metrics
+            # Add core metrics with icons
             metrics = {
-                "Total Events": len(events),
-                "Search Events": len([e for e in events if e.type == EventType.SEARCH_STARTED]),
-                "Error Events": len([e for e in events if not e.success]),
-                "Cache Hit Rate": f"{event_manager.get_cache_hit_rate():.2%}",
-                "Avg Search Time": f"{event_manager.get_average_search_time():.3f}s",
-                "Active Models": event_manager.get_active_model_count(),
+                "📈 Total Events": len(events),
+                "🔍 Search Events": len([e for e in events if e.type == EventType.SEARCH_STARTED]),
+                "❌ Error Events": len([e for e in events if not e.success]),
+                "💾 Cache Hit Rate": f"{event_manager.get_cache_hit_rate():.2%}",
+                "⚡ Avg Search Time": f"{event_manager.get_average_search_time():.3f}s",
+                "🤖 Active Models": event_manager.get_active_model_count(),
             }
             
             for metric, value in metrics.items():
                 metrics_table.add_row(metric, str(value))
                 
-            return Panel(metrics_table, border_style="blue", expand=True)
+            return Panel(
+                metrics_table,
+                border_style="blue",
+                title="[bold white]System Metrics[/bold white]",
+                subtitle="[dim]Real-time system statistics[/dim]",
+                padding=(0, 1),
+                expand=True
+            )
             
         def make_events_panel() -> Panel:
             """Create events panel with recent activity."""
@@ -253,8 +400,10 @@ def monitor(verbose: int, interval: int) -> None:
             if not events:
                 return Panel(
                     "[dim]No recent events[/dim]",
-                    title="Recent Events",
+                    title="[bold white]Recent Events[/bold white]",
+                    subtitle="[dim]Waiting for activity...[/dim]",
                     border_style="yellow",
+                    padding=(0, 1),
                     expand=True
                 )
             
@@ -262,30 +411,55 @@ def monitor(verbose: int, interval: int) -> None:
                 show_header=True,
                 header_style="bold yellow",
                 box=box.ROUNDED,
-                title="Recent Events",
                 padding=(0, 1),
-                expand=True
+                expand=True,
+                show_lines=True  # Adiciona linhas entre as rows para melhor legibilidade
             )
             
-            events_table.add_column("Time", style="cyan", width=8)
-            events_table.add_column("Type", style="magenta")
-            events_table.add_column("Component", style="blue")
-            events_table.add_column("Status", style="green", width=6)
-            events_table.add_column("Description", style="white")
+            events_table.add_column("⏰ Time", style="cyan", width=8, no_wrap=True)
+            events_table.add_column(
+                "📋 Type",
+                style="magenta",
+                width=25,  # Aumentado para acomodar tipos mais longos
+                overflow="fold"  # Quebra o texto em várias linhas se necessário
+            )
+            events_table.add_column(
+                "🔧 Component",
+                style="blue",
+                width=12,
+                no_wrap=True
+            )
+            events_table.add_column("✨", style="green", width=2, justify="center")
+            events_table.add_column(
+                "📝 Description",
+                style="white",
+                width=50,  # Largura fixa para descrição
+                overflow="fold"  # Quebra o texto em várias linhas se necessário
+            )
             
             for event in reversed(events[-10:]):  # Show last 10 events
                 status = "✓" if event.success else "✗"
                 status_style = "green" if event.success else "red"
                 
+                # Formata o tipo do evento para melhor legibilidade
+                event_type = event.type.name.replace("_", " ").title()
+                
                 events_table.add_row(
                     event.timestamp.strftime("%H:%M:%S"),
-                    event.type.name.replace("_", " ").title(),
+                    event_type,
                     event.component,
                     f"[{status_style}]{status}[/{status_style}]",
                     str(event.description or "")
                 )
             
-            return Panel(events_table, border_style="yellow", expand=True)
+            return Panel(
+                events_table,
+                border_style="yellow",
+                title="[bold white]Recent Events[/bold white]",
+                subtitle=f"[dim]Last {len(events)} events[/dim]",
+                padding=(0, 1),
+                expand=True
+            )
             
         def make_error_panel() -> Panel:
             """Create error panel showing recent errors."""
@@ -296,8 +470,10 @@ def monitor(verbose: int, interval: int) -> None:
             if not events:
                 return Panel(
                     "[dim]No errors[/dim]",
-                    title="Recent Errors",
+                    title="[bold white]Recent Errors[/bold white]",
+                    subtitle="[dim]System running smoothly[/dim]",
                     border_style="red",
+                    padding=(0, 1),
                     expand=True
                 )
             
@@ -305,14 +481,13 @@ def monitor(verbose: int, interval: int) -> None:
                 show_header=True,
                 header_style="bold red",
                 box=box.ROUNDED,
-                title="Recent Errors",
                 padding=(0, 1),
                 expand=True
             )
             
-            error_table.add_column("Time", style="cyan", width=8)
-            error_table.add_column("Component", style="blue")
-            error_table.add_column("Error", style="red")
+            error_table.add_column("⏰ Time", style="cyan", width=8, no_wrap=True)
+            error_table.add_column("🔧 Component", style="blue", width=15, no_wrap=True)
+            error_table.add_column("❌ Error", style="red")
             
             for event in reversed(events[-5:]):  # Show last 5 errors
                 error_table.add_row(
@@ -321,55 +496,40 @@ def monitor(verbose: int, interval: int) -> None:
                     str(event.error or "Unknown error")
                 )
             
-            return Panel(error_table, border_style="red", expand=True)
+            return Panel(
+                error_table,
+                border_style="red",
+                title="[bold white]Recent Errors[/bold white]",
+                subtitle=f"[dim]Last {len(events)} errors[/dim]",
+                padding=(0, 1),
+                expand=True
+            )
         
         # Create layout
         layout = Layout()
         
         # Vertical layout
         layout.split_column(
-            Layout(name="header", size=3),
-            Layout(name="metrics", size=10),
+            Layout(name="header", size=4),  # Ajustado para 4 linhas
+            Layout(name="metrics", size=8),
             Layout(name="events", ratio=2),
-            Layout(name="errors", size=10),
-            Layout(name="footer", size=3)
+            Layout(name="errors", size=8)
         )
         
         # Start live display
         with Live(layout, refresh_per_second=1/interval, screen=True) as live:
             try:
                 while True:
-                    now = datetime.now()
-                    # Update header with both refresh info and last update
-                    layout["header"].update(
-                        Panel(
-                            Group(
-                                Text.from_markup(f"[bold green]System Monitor[/bold green] - Refresh: {interval}s - Press Ctrl+C to exit"),
-                                Text.from_markup(f"[dim]Last updated: {now.strftime('%Y-%m-%d %H:%M:%S')}[/dim]")
-                            ),
-                            style="bold white on blue",
-                            expand=True
-                        )
-                    )
-                    
-                    # Update main panels
+                    # Update all panels
+                    layout["header"].update(make_header())
                     layout["metrics"].update(make_metrics_panel())
                     layout["events"].update(make_events_panel())
                     layout["errors"].update(make_error_panel())
                     
-                    # Update footer with system info
-                    layout["footer"].update(
-                        Panel(
-                            f"System Status: [green]Active[/green] - Uptime: {(now - event_manager._monitoring_start_time).total_seconds():.0f}s",
-                            style="bold white on blue",
-                            expand=True
-                        )
-                    )
-                    
                     # Emit monitoring update event (but don't show in events panel)
                     event_manager.emit(Event(
                         type=EventType.MONITORING_UPDATED,
-                        timestamp=now,
+                        timestamp=datetime.now(),
                         component="monitoring",
                         description="Updated monitoring display"
                     ))

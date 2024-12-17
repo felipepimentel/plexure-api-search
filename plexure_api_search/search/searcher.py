@@ -18,7 +18,7 @@ from .search_models import SearchResult
 from .understanding import ZeroShotUnderstanding
 from ..monitoring import metrics_manager
 from ..monitoring.events import Event, EventType, event_manager
-from .vectorizer import TripleVectorizer
+from .vectorizer import TripleVectorizer, Triple
 
 logger = logging.getLogger(__name__)
 
@@ -89,16 +89,47 @@ class APISearcher:
         Returns:
             Query vector
         """
-        # Create a Triple object for the query
-        from .vectorizer import Triple
-        query_triple = Triple(
-            endpoint=query,  # Use query as endpoint for search
-            method="*",     # Wildcard for method since it's a search
-            description=query  # Use query as description for semantic matching
-        )
+        # Emit vectorization started event
+        event_manager.emit(Event(
+            type=EventType.EMBEDDING_STARTED,
+            timestamp=datetime.now(),
+            component="vectorizer",
+            description=f"Vectorizing query: {query}"
+        ))
         
-        # Use the vectorizer to get query embedding
-        return self.vectorizer.vectorize(query_triple)
+        try:
+            # Create a Triple object for the query
+            query_triple = Triple(
+                endpoint=query,
+                method="*",
+                description=query
+            )
+            
+            # Use the vectorizer to get query embedding
+            vector = self.vectorizer.vectorize(query_triple)
+            
+            # Emit success event
+            event_manager.emit(Event(
+                type=EventType.EMBEDDING_COMPLETED,
+                timestamp=datetime.now(),
+                component="vectorizer",
+                description="Query vectorization completed",
+                success=True
+            ))
+            
+            return vector
+            
+        except Exception as e:
+            # Emit failure event
+            event_manager.emit(Event(
+                type=EventType.EMBEDDING_FAILED,
+                timestamp=datetime.now(),
+                component="vectorizer",
+                description="Query vectorization failed",
+                error=str(e),
+                success=False
+            ))
+            raise
 
     def _base_search(
         self,
@@ -123,13 +154,21 @@ class APISearcher:
         try:
             # Check cache first
             if use_cache:
+                event_manager.emit(Event(
+                    type=EventType.CACHE_UPDATE,
+                    timestamp=datetime.now(),
+                    component="search",
+                    description="Checking search cache"
+                ))
+                
                 cached_results = search_cache.get(query)
                 if cached_results:
                     event_manager.emit(Event(
                         type=EventType.CACHE_HIT,
                         timestamp=datetime.now(),
                         component="search",
-                        description="Using cached search results"
+                        description="Using cached search results",
+                        metadata={"results_count": len(cached_results)}
                     ))
                     return cached_results
 
@@ -141,15 +180,37 @@ class APISearcher:
             ))
 
             # Vector search
+            event_manager.emit(Event(
+                type=EventType.SEARCH_QUERY_PROCESSED,
+                timestamp=datetime.now(),
+                component="search",
+                description="Processing search query"
+            ))
+            
             query_vector = self.vectorize_query(query)
             
             # Use FAISS for local search
             results = []
             try:
                 # Get embeddings for all endpoints
-                from .vectorizer import Triple
-                endpoints = self._get_endpoints()  # You need to implement this
+                event_manager.emit(Event(
+                    type=EventType.SEARCH_STARTED,
+                    timestamp=datetime.now(),
+                    component="faiss",
+                    description="Loading endpoints for search"
+                ))
+                
+                endpoints = self._get_endpoints()
                 endpoint_vectors = []
+                
+                # Vectorize endpoints
+                event_manager.emit(Event(
+                    type=EventType.EMBEDDING_STARTED,
+                    timestamp=datetime.now(),
+                    component="vectorizer",
+                    description="Vectorizing endpoints"
+                ))
+                
                 for endpoint in endpoints:
                     triple = Triple(
                         endpoint=endpoint["path"],
@@ -159,7 +220,21 @@ class APISearcher:
                     vector = self.vectorizer.vectorize(triple)
                     endpoint_vectors.append((vector, endpoint))
                 
+                event_manager.emit(Event(
+                    type=EventType.EMBEDDING_COMPLETED,
+                    timestamp=datetime.now(),
+                    component="vectorizer",
+                    description=f"Vectorized {len(endpoints)} endpoints"
+                ))
+                
                 # Compute similarities
+                event_manager.emit(Event(
+                    type=EventType.SEARCH_QUERY_PROCESSED,
+                    timestamp=datetime.now(),
+                    component="search",
+                    description="Computing similarities"
+                ))
+                
                 similarities = []
                 for vector, endpoint in endpoint_vectors:
                     similarity = np.dot(query_vector, vector) / (
@@ -186,16 +261,56 @@ class APISearcher:
                     }
                     results.append(processed_result)
                 
+                event_manager.emit(Event(
+                    type=EventType.SEARCH_RESULTS_FOUND,
+                    timestamp=datetime.now(),
+                    component="search",
+                    description=f"Found {len(results)} initial results",
+                    metadata={
+                        "result_count": len(results),
+                        "top_score": max(r["score"] for r in results) if results else 0
+                    }
+                ))
+                
             except Exception as e:
                 logger.error(f"Search failed: {e}")
+                event_manager.emit(Event(
+                    type=EventType.SEARCH_FAILED,
+                    timestamp=datetime.now(),
+                    component="search",
+                    description="Vector search failed",
+                    error=str(e),
+                    success=False
+                ))
                 results = []
 
             # Enhance results if needed
             if enhance_results and results:
+                event_manager.emit(Event(
+                    type=EventType.SEARCH_STARTED,
+                    timestamp=datetime.now(),
+                    component="enhancer",
+                    description="Enhancing search results"
+                ))
+                
                 results = self._enhance_results(query, results)
+                
+                event_manager.emit(Event(
+                    type=EventType.SEARCH_COMPLETED,
+                    timestamp=datetime.now(),
+                    component="enhancer",
+                    description="Results enhancement completed",
+                    metadata={"enhanced_count": len(results)}
+                ))
 
             # Cache results
             if use_cache:
+                event_manager.emit(Event(
+                    type=EventType.CACHE_UPDATE,
+                    timestamp=datetime.now(),
+                    component="search",
+                    description="Caching search results"
+                ))
                 search_cache.set(query, results)
 
             # Record search time
@@ -208,9 +323,11 @@ class APISearcher:
                 timestamp=datetime.now(),
                 component="search",
                 description="Search completed successfully",
+                duration_ms=search_time * 1000,
                 metadata={
                     "results_count": len(results),
-                    "search_time": search_time
+                    "search_time": search_time,
+                    "query": query
                 }
             ))
 
@@ -228,7 +345,8 @@ class APISearcher:
                 component="search",
                 description="Search failed",
                 error=str(e),
-                success=False
+                success=False,
+                metadata={"query": query}
             ))
             
             return []
@@ -412,7 +530,22 @@ class APISearcher:
         """
         try:
             # Get query categories
+            event_manager.emit(Event(
+                type=EventType.SEARCH_STARTED,
+                timestamp=datetime.now(),
+                component="understanding",
+                description="Analyzing query categories"
+            ))
+            
             query_categories = self.understanding.get_categories(query)
+            
+            event_manager.emit(Event(
+                type=EventType.SEARCH_COMPLETED,
+                timestamp=datetime.now(),
+                component="understanding",
+                description=f"Found categories: {', '.join(query_categories)}",
+                metadata={"categories": query_categories}
+            ))
             
             # Enhance each result
             enhanced_results = []
@@ -446,8 +579,27 @@ class APISearcher:
             # Sort by final score
             enhanced_results.sort(key=lambda x: x["score"], reverse=True)
             
+            event_manager.emit(Event(
+                type=EventType.SEARCH_COMPLETED,
+                timestamp=datetime.now(),
+                component="enhancer",
+                description="Results enhancement completed",
+                metadata={
+                    "enhanced_count": len(enhanced_results),
+                    "categories_found": len(query_categories)
+                }
+            ))
+            
             return enhanced_results
             
         except Exception as e:
             logger.error(f"Failed to enhance results: {e}")
+            event_manager.emit(Event(
+                type=EventType.SEARCH_FAILED,
+                timestamp=datetime.now(),
+                component="enhancer",
+                description="Results enhancement failed",
+                error=str(e),
+                success=False
+            ))
             return results

@@ -97,11 +97,21 @@ class ZeroShotUnderstanding:
             List of matching category names
         """
         try:
+            event_manager.emit(Event(
+                type=EventType.SEARCH_STARTED,
+                timestamp=datetime.now(),
+                component="understanding",
+                description=f"Getting categories for text: {text[:50]}..."
+            ))
+            
             # Get text embedding
             text_embedding = self.model.encode(text, convert_to_numpy=True)
             
             # Get embeddings for all category examples
             matching_categories = set()
+            total_comparisons = sum(len(examples) for examples in self.categories.values())
+            processed = 0
+            
             for category, examples in self.categories.items():
                 # Get embeddings for examples
                 example_embeddings = self.model.encode(examples, convert_to_numpy=True)
@@ -113,15 +123,47 @@ class ZeroShotUnderstanding:
                         np.linalg.norm(text_embedding) * np.linalg.norm(example_embedding)
                     )
                     similarities.append(similarity)
+                    processed += 1
                 
                 # If any example is above threshold, add category
                 if max(similarities) > self.similarity_threshold:
                     matching_categories.add(category)
+                    
+                    event_manager.emit(Event(
+                        type=EventType.SEARCH_QUERY_PROCESSED,
+                        timestamp=datetime.now(),
+                        component="understanding",
+                        description=f"Found matching category: {category}",
+                        metadata={
+                            "category": category,
+                            "similarity": float(max(similarities)),
+                            "progress": processed / total_comparisons
+                        }
+                    ))
+            
+            event_manager.emit(Event(
+                type=EventType.SEARCH_COMPLETED,
+                timestamp=datetime.now(),
+                component="understanding",
+                description=f"Found {len(matching_categories)} categories",
+                metadata={
+                    "categories": list(matching_categories),
+                    "total_processed": processed
+                }
+            ))
             
             return list(matching_categories)
             
         except Exception as e:
             logger.error(f"Failed to get categories: {e}")
+            event_manager.emit(Event(
+                type=EventType.SEARCH_FAILED,
+                timestamp=datetime.now(),
+                component="understanding",
+                description="Category analysis failed",
+                error=str(e),
+                success=False
+            ))
             return []
 
     def classify_intent(self, query: str) -> str:
@@ -134,12 +176,22 @@ class ZeroShotUnderstanding:
             Classified intent
         """
         try:
+            event_manager.emit(Event(
+                type=EventType.SEARCH_STARTED,
+                timestamp=datetime.now(),
+                component="understanding",
+                description=f"Classifying intent for query: {query}"
+            ))
+            
             # Get query embedding
             query_embedding = self.model.encode(query, convert_to_numpy=True)
             
             # Get embeddings for all intent examples
             best_intent = "search"  # Default intent
             best_score = 0.0
+            
+            total_intents = len(self.intents)
+            processed = 0
             
             for intent, examples in self.intents.items():
                 # Get embeddings for examples
@@ -155,14 +207,46 @@ class ZeroShotUnderstanding:
                 
                 # Get max similarity for this intent
                 max_similarity = max(similarities)
+                processed += 1
+                
+                event_manager.emit(Event(
+                    type=EventType.SEARCH_QUERY_PROCESSED,
+                    timestamp=datetime.now(),
+                    component="understanding",
+                    description=f"Processed intent: {intent}",
+                    metadata={
+                        "intent": intent,
+                        "similarity": float(max_similarity),
+                        "progress": processed / total_intents
+                    }
+                ))
                 
                 # Update best intent if this one is better
                 if max_similarity > best_score:
                     best_score = max_similarity
                     best_intent = intent
             
+            event_manager.emit(Event(
+                type=EventType.SEARCH_COMPLETED,
+                timestamp=datetime.now(),
+                component="understanding",
+                description=f"Classified intent as: {best_intent}",
+                metadata={
+                    "intent": best_intent,
+                    "confidence": float(best_score)
+                }
+            ))
+            
             return best_intent
             
         except Exception as e:
             logger.error(f"Failed to classify intent: {e}")
+            event_manager.emit(Event(
+                type=EventType.SEARCH_FAILED,
+                timestamp=datetime.now(),
+                component="understanding",
+                description="Intent classification failed",
+                error=str(e),
+                success=False
+            ))
             return "search"  # Default intent on error
