@@ -208,10 +208,12 @@ def monitor(verbose: int, interval: int) -> None:
         
         # Initialize event manager monitoring
         event_manager.start_monitoring()
+        last_update = datetime.now()
         
         def make_metrics_panel() -> Panel:
             """Create metrics panel with current stats."""
-            events = event_manager.get_recent_events()
+            events = [e for e in event_manager.get_recent_events() 
+                     if e.type != EventType.MONITORING_UPDATED]  # Filter out monitoring updates
             
             metrics_table = Table(
                 show_header=True,
@@ -242,7 +244,11 @@ def monitor(verbose: int, interval: int) -> None:
             
         def make_events_panel() -> Panel:
             """Create events panel with recent activity."""
-            events = event_manager.get_recent_events(minutes=2)  # Last 2 minutes
+            # Filter out monitoring events
+            events = [e for e in event_manager.get_recent_events(minutes=2)
+                     if e.type != EventType.MONITORING_UPDATED and 
+                        e.type != EventType.MONITORING_STARTED and
+                        e.type != EventType.MONITORING_STOPPED]
             
             if not events:
                 return Panel(
@@ -283,7 +289,9 @@ def monitor(verbose: int, interval: int) -> None:
             
         def make_error_panel() -> Panel:
             """Create error panel showing recent errors."""
-            events = [e for e in event_manager.get_recent_events() if not e.success]
+            # Filter out monitoring events
+            events = [e for e in event_manager.get_recent_events() 
+                     if not e.success and e.type != EventType.MONITORING_UPDATED]
             
             if not events:
                 return Panel(
@@ -331,10 +339,14 @@ def monitor(verbose: int, interval: int) -> None:
         with Live(layout, refresh_per_second=1/interval, screen=True) as live:
             try:
                 while True:
-                    # Update header
+                    now = datetime.now()
+                    # Update header with both refresh info and last update
                     layout["header"].update(
                         Panel(
-                            f"[bold green]System Monitor[/bold green] - Refresh: {interval}s - Press Ctrl+C to exit",
+                            Group(
+                                Text.from_markup(f"[bold green]System Monitor[/bold green] - Refresh: {interval}s - Press Ctrl+C to exit"),
+                                Text.from_markup(f"[dim]Last updated: {now.strftime('%Y-%m-%d %H:%M:%S')}[/dim]")
+                            ),
                             style="bold white on blue",
                             expand=True
                         )
@@ -345,19 +357,19 @@ def monitor(verbose: int, interval: int) -> None:
                     layout["events"].update(make_events_panel())
                     layout["errors"].update(make_error_panel())
                     
-                    # Update footer with timestamp
+                    # Update footer with system info
                     layout["footer"].update(
                         Panel(
-                            f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                            f"System Status: [green]Active[/green] - Uptime: {(now - event_manager._monitoring_start_time).total_seconds():.0f}s",
                             style="bold white on blue",
                             expand=True
                         )
                     )
                     
-                    # Emit monitoring update event
+                    # Emit monitoring update event (but don't show in events panel)
                     event_manager.emit(Event(
                         type=EventType.MONITORING_UPDATED,
-                        timestamp=datetime.now(),
+                        timestamp=now,
                         component="monitoring",
                         description="Updated monitoring display"
                     ))
