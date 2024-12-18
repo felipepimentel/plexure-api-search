@@ -17,7 +17,7 @@ from .quality import QualityMetrics
 from .search_models import SearchResult
 from .understanding import ZeroShotUnderstanding
 from ..monitoring.metrics_manager import metrics_manager
-from ..monitoring.events import Event, EventType, event_manager
+from ..monitoring.events import Event, EventType, publisher
 from .vectorizer import TripleVectorizer, Triple
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ class APISearcher:
             Query vector
         """
         # Emit vectorization started event
-        event_manager.emit(Event(
+        publisher.emit(Event(
             type=EventType.EMBEDDING_STARTED,
             timestamp=datetime.now(),
             component="vectorizer",
@@ -109,7 +109,7 @@ class APISearcher:
             vector = self.vectorizer.vectorize(query_triple)
             
             # Emit success event
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.EMBEDDING_COMPLETED,
                 timestamp=datetime.now(),
                 component="vectorizer",
@@ -121,7 +121,7 @@ class APISearcher:
             
         except Exception as e:
             # Emit failure event
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.EMBEDDING_FAILED,
                 timestamp=datetime.now(),
                 component="vectorizer",
@@ -143,7 +143,7 @@ class APISearcher:
         start_time = time.time()
         
         # Emit search started event
-        event_manager.emit(Event(
+        publisher.emit(Event(
             type=EventType.SEARCH_STARTED,
             timestamp=datetime.now(),
             component="search",
@@ -154,7 +154,7 @@ class APISearcher:
         try:
             # Check cache first
             if use_cache:
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.CACHE_UPDATE,
                     timestamp=datetime.now(),
                     component="search",
@@ -163,7 +163,7 @@ class APISearcher:
                 
                 cached_results = search_cache.get(query)
                 if cached_results:
-                    event_manager.emit(Event(
+                    publisher.emit(Event(
                         type=EventType.CACHE_HIT,
                         timestamp=datetime.now(),
                         component="search",
@@ -172,7 +172,7 @@ class APISearcher:
                     ))
                     return cached_results
 
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.CACHE_MISS,
                 timestamp=datetime.now(),
                 component="search",
@@ -180,7 +180,7 @@ class APISearcher:
             ))
 
             # Vector search
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_QUERY_PROCESSED,
                 timestamp=datetime.now(),
                 component="search",
@@ -193,7 +193,7 @@ class APISearcher:
             results = []
             try:
                 # Get embeddings for all endpoints
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.SEARCH_STARTED,
                     timestamp=datetime.now(),
                     component="faiss",
@@ -204,7 +204,7 @@ class APISearcher:
                 endpoint_vectors = []
                 
                 # Vectorize endpoints
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.EMBEDDING_STARTED,
                     timestamp=datetime.now(),
                     component="vectorizer",
@@ -220,7 +220,7 @@ class APISearcher:
                     vector = self.vectorizer.vectorize(triple)
                     endpoint_vectors.append((vector, endpoint))
                 
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.EMBEDDING_COMPLETED,
                     timestamp=datetime.now(),
                     component="vectorizer",
@@ -228,7 +228,7 @@ class APISearcher:
                 ))
                 
                 # Compute similarities
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.SEARCH_QUERY_PROCESSED,
                     timestamp=datetime.now(),
                     component="search",
@@ -261,7 +261,7 @@ class APISearcher:
                     }
                     results.append(processed_result)
                 
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.SEARCH_RESULTS_FOUND,
                     timestamp=datetime.now(),
                     component="search",
@@ -274,7 +274,7 @@ class APISearcher:
                 
             except Exception as e:
                 logger.error(f"Search failed: {e}")
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.SEARCH_FAILED,
                     timestamp=datetime.now(),
                     component="search",
@@ -286,7 +286,7 @@ class APISearcher:
 
             # Enhance results if needed
             if enhance_results and results:
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.SEARCH_STARTED,
                     timestamp=datetime.now(),
                     component="enhancer",
@@ -295,7 +295,7 @@ class APISearcher:
                 
                 results = self._enhance_results(query, results)
                 
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.SEARCH_COMPLETED,
                     timestamp=datetime.now(),
                     component="enhancer",
@@ -305,7 +305,7 @@ class APISearcher:
 
             # Cache results
             if use_cache:
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.CACHE_UPDATE,
                     timestamp=datetime.now(),
                     component="search",
@@ -318,7 +318,7 @@ class APISearcher:
             self.metrics.record_search_latency(search_time)
 
             # Emit search completed event
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_COMPLETED,
                 timestamp=datetime.now(),
                 component="search",
@@ -339,7 +339,7 @@ class APISearcher:
             logger.error(f"Traceback: {traceback.format_exc()}")
             
             # Emit search failed event
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_FAILED,
                 timestamp=datetime.now(),
                 component="search",
@@ -530,7 +530,7 @@ class APISearcher:
         """
         try:
             # Get query categories
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_STARTED,
                 timestamp=datetime.now(),
                 component="understanding",
@@ -539,7 +539,7 @@ class APISearcher:
             
             query_categories = self.understanding.get_categories(query)
             
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_COMPLETED,
                 timestamp=datetime.now(),
                 component="understanding",
@@ -579,7 +579,7 @@ class APISearcher:
             # Sort by final score
             enhanced_results.sort(key=lambda x: x["score"], reverse=True)
             
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_COMPLETED,
                 timestamp=datetime.now(),
                 component="enhancer",
@@ -594,7 +594,7 @@ class APISearcher:
             
         except Exception as e:
             logger.error(f"Failed to enhance results: {e}")
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_FAILED,
                 timestamp=datetime.now(),
                 component="enhancer",

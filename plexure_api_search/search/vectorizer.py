@@ -8,7 +8,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from ..embedding.embeddings import EmbeddingManager
-from ..monitoring.events import Event, EventType, event_manager
+from ..monitoring.events import Event, EventType, publisher
 from ..config import config_instance
 
 
@@ -53,7 +53,7 @@ class TripleVectorizer:
         self.embedding_manager = embedding_manager or EmbeddingManager()
         
         # Emit initialization event
-        event_manager.emit(
+        publisher.emit(
             Event(
                 type=EventType.MODEL_LOADING_STARTED,
                 timestamp=datetime.now(),
@@ -65,7 +65,7 @@ class TripleVectorizer:
     def vectorize(self, triple: Triple) -> np.ndarray:
         """Convert a triple into its vector representation."""
         # Emit vectorization start event
-        event_manager.emit(
+        publisher.emit(
             Event(
                 type=EventType.EMBEDDING_STARTED,
                 timestamp=datetime.now(),
@@ -82,7 +82,7 @@ class TripleVectorizer:
             vector = self.embedding_manager.get_embeddings(text)
             
             # Emit success event
-            event_manager.emit(
+            publisher.emit(
                 Event(
                     type=EventType.EMBEDDING_COMPLETED,
                     timestamp=datetime.now(),
@@ -95,7 +95,7 @@ class TripleVectorizer:
             
         except Exception as e:
             # Emit failure event
-            event_manager.emit(
+            publisher.emit(
                 Event(
                     type=EventType.EMBEDDING_FAILED,
                     timestamp=datetime.now(),

@@ -16,7 +16,7 @@ import torch.nn.functional as F
 
 from ..utils.cache import DiskCache
 from ..config import config_instance
-from ..monitoring.events import Event, EventType, event_manager
+from ..monitoring.events import Event, EventType, publisher
 
 logger = logging.getLogger(__name__)
 
@@ -172,8 +172,16 @@ class EmbeddingManager:
         """Initialize embedding models."""
         self.use_cache = use_cache
         
+        # Start publisher
+        try:
+            publisher.start()
+            time.sleep(0.1)  # Allow time for connection
+            logger.debug("Publisher started for embeddings")
+        except Exception as e:
+            logger.warning(f"Failed to start publisher: {e}")
+        
         # Initialize main bi-encoder
-        event_manager.emit(Event(
+        publisher.emit(Event(
             type=EventType.MODEL_LOADING_STARTED,
             timestamp=datetime.now(),
             component="embeddings",
@@ -186,7 +194,7 @@ class EmbeddingManager:
             test_embedding = self.bi_encoder.encode("test", convert_to_numpy=True)
             if test_embedding is None or len(test_embedding) == 0:
                 raise ValueError("Bi-encoder model failed verification")
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.MODEL_LOADING_COMPLETED,
                 timestamp=datetime.now(),
                 component="embeddings",
@@ -198,7 +206,7 @@ class EmbeddingManager:
             self.bi_encoder = None
         
         # Initialize fallback model
-        event_manager.emit(Event(
+        publisher.emit(Event(
             type=EventType.MODEL_LOADING_STARTED,
             timestamp=datetime.now(),
             component="embeddings",
@@ -211,7 +219,7 @@ class EmbeddingManager:
             test_embedding = self.fallback_encoder.encode("test", convert_to_numpy=True)
             if test_embedding is None or len(test_embedding) == 0:
                 raise ValueError("Fallback model failed verification")
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.MODEL_LOADING_COMPLETED,
                 timestamp=datetime.now(),
                 component="embeddings",
@@ -225,7 +233,7 @@ class EmbeddingManager:
         # Initialize multilingual model if needed
         self.multilingual_encoder = None
         if hasattr(config_instance, "multilingual_model"):
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.MODEL_LOADING_STARTED,
                 timestamp=datetime.now(),
                 component="embeddings",
@@ -238,7 +246,7 @@ class EmbeddingManager:
                 test_embedding = self.multilingual_encoder.encode("test", convert_to_numpy=True)
                 if test_embedding is None or len(test_embedding) == 0:
                     raise ValueError("Multilingual model failed verification")
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.MODEL_LOADING_COMPLETED,
                     timestamp=datetime.now(),
                     component="embeddings",
@@ -284,7 +292,7 @@ class EmbeddingManager:
             # Convert single text to list for consistent handling
             texts = [text] if isinstance(text, str) else text
             
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.EMBEDDING_STARTED,
                 timestamp=datetime.now(),
                 component="embeddings",
@@ -312,7 +320,7 @@ class EmbeddingManager:
             if isinstance(text, str):
                 embeddings = embeddings[0]
             
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.EMBEDDING_COMPLETED,
                 timestamp=datetime.now(),
                 component="embeddings",
@@ -329,7 +337,7 @@ class EmbeddingManager:
 
         except Exception as e:
             logger.error(f"Failed to get embeddings: {e}")
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.EMBEDDING_FAILED,
                 timestamp=datetime.now(),
                 component="embeddings",
@@ -351,7 +359,7 @@ class EmbeddingManager:
             Similarity score between 0 and 1
         """
         try:
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.EMBEDDING_STARTED,
                 timestamp=datetime.now(),
                 component="embeddings",
@@ -379,7 +387,7 @@ class EmbeddingManager:
             
             duration_ms = (time.time() - start_time) * 1000
             
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.EMBEDDING_COMPLETED,
                 timestamp=datetime.now(),
                 component="embeddings",
@@ -395,7 +403,7 @@ class EmbeddingManager:
             
         except Exception as e:
             logger.error(f"Failed to compute similarity: {e}")
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.EMBEDDING_FAILED,
                 timestamp=datetime.now(),
                 component="embeddings",

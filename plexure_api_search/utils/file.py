@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import yaml
 
+from ..config import config_instance
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,12 +29,15 @@ def find_api_files(
     if extensions is None:
         extensions = [".yaml", ".yml", ".json"]
 
+    # Use configured API directory if none provided
+    search_dir = directory or str(config_instance.api_dir)
+
     files = []
     for ext in extensions:
-        pattern = os.path.join(directory or "apis", f"**/*{ext}")
+        pattern = os.path.join(search_dir, f"**/*{ext}")
         files.extend(glob.glob(pattern, recursive=True))
 
-    logger.info(f"Found {len(files)} API files in {directory or 'apis'}")
+    logger.info(f"Found {len(files)} API files in {search_dir}")
     return files
 
 

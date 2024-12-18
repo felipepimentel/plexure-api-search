@@ -7,7 +7,7 @@ from typing import List, Optional, Dict, Any
 import numpy as np
 
 from sentence_transformers import SentenceTransformer
-from ..monitoring.events import Event, EventType, event_manager
+from ..monitoring.events import Event, EventType, publisher
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class ZeroShotUnderstanding:
             List of matching category names
         """
         try:
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_STARTED,
                 timestamp=datetime.now(),
                 component="understanding",
@@ -129,7 +129,7 @@ class ZeroShotUnderstanding:
                 if max(similarities) > self.similarity_threshold:
                     matching_categories.add(category)
                     
-                    event_manager.emit(Event(
+                    publisher.emit(Event(
                         type=EventType.SEARCH_QUERY_PROCESSED,
                         timestamp=datetime.now(),
                         component="understanding",
@@ -141,7 +141,7 @@ class ZeroShotUnderstanding:
                         }
                     ))
             
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_COMPLETED,
                 timestamp=datetime.now(),
                 component="understanding",
@@ -156,7 +156,7 @@ class ZeroShotUnderstanding:
             
         except Exception as e:
             logger.error(f"Failed to get categories: {e}")
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_FAILED,
                 timestamp=datetime.now(),
                 component="understanding",
@@ -176,7 +176,7 @@ class ZeroShotUnderstanding:
             Classified intent
         """
         try:
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_STARTED,
                 timestamp=datetime.now(),
                 component="understanding",
@@ -209,7 +209,7 @@ class ZeroShotUnderstanding:
                 max_similarity = max(similarities)
                 processed += 1
                 
-                event_manager.emit(Event(
+                publisher.emit(Event(
                     type=EventType.SEARCH_QUERY_PROCESSED,
                     timestamp=datetime.now(),
                     component="understanding",
@@ -226,7 +226,7 @@ class ZeroShotUnderstanding:
                     best_score = max_similarity
                     best_intent = intent
             
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_COMPLETED,
                 timestamp=datetime.now(),
                 component="understanding",
@@ -241,7 +241,7 @@ class ZeroShotUnderstanding:
             
         except Exception as e:
             logger.error(f"Failed to classify intent: {e}")
-            event_manager.emit(Event(
+            publisher.emit(Event(
                 type=EventType.SEARCH_FAILED,
                 timestamp=datetime.now(),
                 component="understanding",

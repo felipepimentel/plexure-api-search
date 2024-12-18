@@ -1,47 +1,31 @@
 # Plexure API Search
 
-A powerful semantic search engine for API documentation with real-time progress tracking and advanced embedding capabilities.
+A powerful semantic search engine for API endpoints, designed to help developers quickly find and understand API endpoints across multiple OpenAPI specifications.
 
 ## Features
 
-### Core Functionality
-- Semantic search over API documentation using modern embedding models
-- Real-time progress tracking with WebSocket updates
-- Advanced vector embedding generation with fallback models
-- LLM-powered API documentation enrichment
-- Caching system for embeddings and search results
-- Support for multiple vector stores (Pinecone)
+### Core Features
+- 🔍 Semantic Search: Find API endpoints using natural language queries
+- 📚 Multi-API Support: Index and search across multiple OpenAPI specifications
+- 🎯 Accurate Results: Advanced vector-based search with relevance scoring
+- 🔄 Real-time Monitoring: Live monitoring of indexing and search operations
+- 🚀 High Performance: Optimized for speed with caching and parallel processing
 
 ### Search Capabilities
-- Semantic similarity search
-- Context-aware query expansion
-- Dynamic result ranking and boosting
-- Cross-encoder reranking
+- Natural language queries
+- Method-based filtering (GET, POST, PUT, DELETE, PATCH)
+- Score-based relevance ranking
+- Query expansion and enhancement
 - Multi-language support
-- Fuzzy matching
+- Fallback model support
 
-### Monitoring & Progress
-- Real-time progress visualization
-- Event-driven architecture
-- Detailed progress tracking
-- WebSocket-based updates
-- Component status monitoring
-- Error tracking and reporting
-
-### Model Features
-- Multiple embedding models support
-- Automatic model fallback
-- Configurable model settings
-- Hugging Face integration
-- Cross-encoder reranking
-- Multi-language support
-
-### Performance
-- Efficient vector operations
-- Caching at multiple levels
-- Batch processing support
-- Optimized embedding generation
-- Configurable performance settings
+### Monitoring
+- Real-time event tracking
+- Process-based event grouping
+- Interactive TUI (Terminal User Interface)
+- Event history with pagination
+- Cross-process communication via ZeroMQ
+- Log-only mode for debugging
 
 ## Installation
 
@@ -56,103 +40,64 @@ cd plexure-api-search
 poetry install
 ```
 
-3. Copy the example environment file and configure your settings:
+3. Configure environment variables:
 ```bash
 cp .env.sample .env
-```
-
-4. Configure the required environment variables in `.env`:
-```env
-# API Directory
-API_DIR=assets/apis
-
-# Vector Settings
-VECTOR_DIMENSION=384
-
-# Pinecone Settings
-PINECONE_API_KEY=your_api_key
-PINECONE_ENVIRONMENT=your_environment
-PINECONE_INDEX_NAME=your_index_name
-
-# Model Settings
-HUGGINGFACE_TOKEN=your_token
-BI_ENCODER_MODEL=sentence-transformers/all-MiniLM-L6-v2
-CROSS_ENCODER_MODEL=sentence-transformers/all-mpnet-base-v2
-
-# OpenRouter Settings (Optional)
-OPENROUTER_API_KEY=your_api_key
+# Edit .env with your settings
 ```
 
 ## Usage
 
-### Indexing API Documentation
-
-Index your API documentation:
+### Indexing APIs
 ```bash
 poetry run python -m plexure_api_search index
 ```
 
-Force reindexing of all documents:
+### Searching Endpoints
 ```bash
-poetry run python -m plexure_api_search index --force
+poetry run python -m plexure_api_search search "find user by id"
 ```
 
-### Running Searches
-
-Search API documentation:
+### Monitoring Operations
 ```bash
-poetry run python -m plexure_api_search search "your query here"
-```
+# With TUI
+poetry run python -m plexure_api_search monitor
 
-### Monitoring Progress
-
-1. Start the web server:
-```bash
-poetry run python -m plexure_api_search serve
-```
-
-2. Open your browser and navigate to:
-```
-http://localhost:8000/progress
+# Log-only mode
+poetry run python -m plexure_api_search monitor --no-tui
 ```
 
 ## Configuration
 
-The system can be configured through environment variables in the `.env` file:
-
-### Vector Store Settings
-- `VECTOR_DIMENSION`: Dimension of embedding vectors
-- `FAISS_INDEX_TYPE`: Type of FAISS index
-- `FAISS_NLIST`: Number of clusters for IVF indices
-
-### Model Settings
-- `BI_ENCODER_MODEL`: Primary bi-encoder model
-- `BI_ENCODER_FALLBACK`: Fallback bi-encoder model
-- `CROSS_ENCODER_MODEL`: Model for reranking
+### Environment Variables
+- `API_DIR`: Directory containing API specifications (default: assets/apis)
+- `VECTOR_DIMENSION`: Embedding vector dimension (default: 384)
+- `PINECONE_*`: Pinecone vector database settings
+- `BI_ENCODER_MODEL`: Model for semantic encoding
+- `CROSS_ENCODER_MODEL`: Model for relevance scoring
 - `MULTILINGUAL_MODEL`: Model for multi-language support
-
-### Cache Settings
 - `CACHE_TTL`: Cache time-to-live in seconds
-- `EMBEDDING_CACHE_TTL`: Embedding cache TTL
-- `REDIS_CACHE_ENABLED`: Enable Redis caching
-- `REDIS_ENABLED`: Enable Redis for other features
+- `LOG_LEVEL`: Logging verbosity level
 
-### Performance Settings
-- `NORMALIZE_EMBEDDINGS`: Whether to normalize vectors
-- `POOLING_STRATEGY`: Token pooling strategy
-- `MAX_SEQ_LENGTH`: Maximum sequence length
+### Supported API Formats
+- OpenAPI 3.0+ (YAML/JSON)
+- Swagger 2.0 (YAML/JSON)
+
+## Project Structure
+
+```
+plexure_api_search/
+├── cli/                    # Command-line interface
+│   ├── commands/          # CLI commands
+│   └── ui/               # TUI components
+├── monitoring/            # Event monitoring system
+├── search/               # Search engine core
+├── indexing/             # API indexing and processing
+├── embedding/            # Vector embedding generation
+└── utils/               # Utility functions
+```
 
 ## Development
-
-### Project Structure
-- `plexure_api_search/`: Main package directory
-  - `embedding/`: Embedding generation
-  - `indexing/`: API indexing
-  - `search/`: Search functionality
-  - `monitoring/`: Progress tracking
-  - `web/`: Web interface
-  - `config.py`: Configuration management
-  - `cli.py`: Command-line interface
 
 ### Running Tests
 ```bash
@@ -160,19 +105,33 @@ poetry run pytest
 ```
 
 ### Code Style
-The project follows PEP 8 guidelines. Format code using:
 ```bash
 poetry run black .
+poetry run isort .
+poetry run flake8
 ```
+
+### Hot Reload (Development Mode)
+```bash
+poetry run python -m plexure_api_search monitor --hot-reload
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Contributing
+## Acknowledgments
 
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+- Built with [Poetry](https://python-poetry.org/)
+- Vector search powered by [Pinecone](https://www.pinecone.io/)
+- Embeddings by [Sentence Transformers](https://www.sbert.net/)
+- TUI powered by [Rich](https://rich.readthedocs.io/)
+- IPC using [ZeroMQ](https://zeromq.org/)

@@ -1,337 +1,239 @@
-"""Rate limiting and security system."""
+"""Rate limiting implementation using file-based storage."""
 
+import json
 import logging
+import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Tuple
-
-import redis
+from pathlib import Path
+from threading import Lock
+from typing import Dict, Optional, Tuple
 
 from ..config import config_instance
-from ..utils.cache import DiskCache
 
 logger = logging.getLogger(__name__)
-
-# Cache for rate limiting
-rate_cache = DiskCache[Dict[str, Any]](
-    namespace="rate_limiting",
-    ttl=config_instance.cache_ttl,
-)
-
 
 @dataclass
 class RateLimitInfo:
     """Rate limit information."""
-
+    
     key: str
     window_start: float
     request_count: int
     window_size: int
     max_requests: int
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary format."""
-        return {
-            "key": self.key,
-            "window_start": self.window_start,
-            "request_count": self.request_count,
-            "window_size": self.window_size,
-            "max_requests": self.max_requests,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RateLimitInfo":
-        """Create from dictionary format."""
-        return cls(**data)
-
 
 class RateLimiter:
-    """Advanced rate limiting with multiple strategies."""
-
-    def __init__(self):
-        """Initialize rate limiter."""
-        self.enabled = config_instance.rate_limit_enabled
-        self.max_requests = config_instance.rate_limit_requests
-        self.window_size = config_instance.rate_limit_window
+    """File-based rate limiter implementation."""
+    
+    def __init__(
+        self,
+        max_requests: int = 100,
+        window_size: int = 60,
+        storage_dir: Optional[str] = None,
+    ):
+        """Initialize rate limiter.
         
-        # Initialize Redis if available
-        self.redis = None
-        if config_instance.redis_url:
-            try:
-                self.redis = redis.from_url(config_instance.redis_url)
-                logger.info("Using Redis for rate limiting")
-            except Exception as e:
-                logger.error(f"Failed to connect to Redis: {e}")
-
-    def _get_redis_key(self, key: str) -> str:
-        """Get Redis key with namespace.
-
         Args:
-            key: Original key
-
-        Returns:
-            Namespaced Redis key
+            max_requests: Maximum requests per window
+            window_size: Window size in seconds
+            storage_dir: Optional storage directory
         """
-        return f"rate_limit:{key}"
-
-    def _check_redis(self, key: str) -> Tuple[bool, Optional[RateLimitInfo]]:
-        """Check rate limit using Redis.
-
+        self.max_requests = max_requests
+        self.window_size = window_size
+        
+        # Set up storage directory
+        storage_dir = storage_dir or getattr(config_instance, "rate_limit_dir", None)
+        if not storage_dir:
+            storage_dir = os.path.join(os.path.expanduser("~"), ".cache", "plexure_api_search", "rate_limits")
+            
+        self.storage_dir = storage_dir
+        os.makedirs(self.storage_dir, exist_ok=True)
+        logger.info(f"Using rate limit storage at {self.storage_dir}")
+        
+        # Thread safety
+        self._lock = Lock()
+        
+        # Clean up expired entries
+        self._cleanup()
+    
+    def _get_path(self, key: str) -> str:
+        """Get storage file path for key.
+        
         Args:
             key: Rate limit key
-
+            
+        Returns:
+            File path
+        """
+        # Use hash of key to avoid filesystem issues
+        hashed_key = str(hash(key))
+        return os.path.join(self.storage_dir, f"{hashed_key}.json")
+    
+    def _load_info(self, key: str) -> Optional[Dict]:
+        """Load rate limit info from file.
+        
+        Args:
+            key: Rate limit key
+            
+        Returns:
+            Rate limit info or None if not found
+        """
+        try:
+            path = self._get_path(key)
+            if not os.path.exists(path):
+                return None
+                
+            with open(path, "r") as f:
+                return json.load(f)
+                
+        except Exception as e:
+            logger.error(f"Error loading rate limit info: {e}")
+            return None
+    
+    def _save_info(self, key: str, info: Dict) -> None:
+        """Save rate limit info to file.
+        
+        Args:
+            key: Rate limit key
+            info: Rate limit info
+        """
+        try:
+            path = self._get_path(key)
+            with open(path, "w") as f:
+                json.dump(info, f)
+                
+        except Exception as e:
+            logger.error(f"Error saving rate limit info: {e}")
+    
+    def _cleanup(self) -> None:
+        """Clean up expired rate limit entries."""
+        try:
+            now = time.time()
+            for filename in os.listdir(self.storage_dir):
+                try:
+                    path = os.path.join(self.storage_dir, filename)
+                    if not os.path.isfile(path):
+                        continue
+                        
+                    # Load info
+                    with open(path, "r") as f:
+                        info = json.load(f)
+                        
+                    # Check if expired
+                    if now - info["window_start"] > self.window_size:
+                        os.remove(path)
+                        
+                except Exception as e:
+                    logger.error(f"Error cleaning up rate limit file {filename}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error cleaning up rate limits: {e}")
+    
+    def check(self, key: str) -> Tuple[bool, Optional[RateLimitInfo]]:
+        """Check if request is allowed.
+        
+        Args:
+            key: Rate limit key
+            
         Returns:
             Tuple of (allowed, limit_info)
         """
-        try:
-            redis_key = self._get_redis_key(key)
-            pipe = self.redis.pipeline()
-
-            # Get current count and window start
-            pipe.get(redis_key)
-            pipe.ttl(redis_key)
-            current, ttl = pipe.execute()
-
-            now = time.time()
-
-            if current is None:
-                # First request in window
-                self.redis.setex(redis_key, self.window_size, 1)
+        with self._lock:
+            try:
+                now = time.time()
+                
+                # Load existing info
+                info = self._load_info(key)
+                
+                if info is None:
+                    # First request
+                    info = {
+                        "window_start": now,
+                        "request_count": 1
+                    }
+                    self._save_info(key, info)
+                    return True, RateLimitInfo(
+                        key=key,
+                        window_start=now,
+                        request_count=1,
+                        window_size=self.window_size,
+                        max_requests=self.max_requests,
+                    )
+                
+                # Check if window expired
+                if now - info["window_start"] > self.window_size:
+                    # Start new window
+                    info = {
+                        "window_start": now,
+                        "request_count": 1
+                    }
+                    self._save_info(key, info)
+                    return True, RateLimitInfo(
+                        key=key,
+                        window_start=now,
+                        request_count=1,
+                        window_size=self.window_size,
+                        max_requests=self.max_requests,
+                    )
+                
+                # Check limit
+                if info["request_count"] >= self.max_requests:
+                    return False, RateLimitInfo(
+                        key=key,
+                        window_start=info["window_start"],
+                        request_count=info["request_count"],
+                        window_size=self.window_size,
+                        max_requests=self.max_requests,
+                    )
+                
+                # Increment counter
+                info["request_count"] += 1
+                self._save_info(key, info)
+                
                 return True, RateLimitInfo(
                     key=key,
-                    window_start=now,
-                    request_count=1,
+                    window_start=info["window_start"],
+                    request_count=info["request_count"],
                     window_size=self.window_size,
                     max_requests=self.max_requests,
                 )
-
-            current = int(current)
-            if current >= self.max_requests:
-                # Rate limit exceeded
-                return False, RateLimitInfo(
-                    key=key,
-                    window_start=now - (self.window_size - ttl),
-                    request_count=current,
-                    window_size=self.window_size,
-                    max_requests=self.max_requests,
-                )
-
-            # Increment counter
-            self.redis.incr(redis_key)
-            return True, RateLimitInfo(
-                key=key,
-                window_start=now - (self.window_size - ttl),
-                request_count=current + 1,
-                window_size=self.window_size,
-                max_requests=self.max_requests,
-            )
-
-        except Exception as e:
-            logger.error(f"Redis rate limit check failed: {e}")
-            return True, None
-
-    def _check_disk(self, key: str) -> Tuple[bool, Optional[RateLimitInfo]]:
-        """Check rate limit using disk cache.
-
-        Args:
-            key: Rate limit key
-
-        Returns:
-            Tuple of (allowed, limit_info)
-        """
-        try:
-            now = time.time()
-            info = rate_cache.get(key)
-
-            if info is None:
-                # First request in window
-                info = RateLimitInfo(
-                    key=key,
-                    window_start=now,
-                    request_count=1,
-                    window_size=self.window_size,
-                    max_requests=self.max_requests,
-                )
-                rate_cache.set(key, info.to_dict())
-                return True, info
-
-            info = RateLimitInfo.from_dict(info)
-
-            # Check if window has expired
-            if now - info.window_start >= self.window_size:
-                # Start new window
-                info = RateLimitInfo(
-                    key=key,
-                    window_start=now,
-                    request_count=1,
-                    window_size=self.window_size,
-                    max_requests=self.max_requests,
-                )
-                rate_cache.set(key, info.to_dict())
-                return True, info
-
-            if info.request_count >= self.max_requests:
-                # Rate limit exceeded
-                return False, info
-
-            # Increment counter
-            info.request_count += 1
-            rate_cache.set(key, info.to_dict())
-            return True, info
-
-        except Exception as e:
-            logger.error(f"Disk rate limit check failed: {e}")
-            return True, None
-
-    def check_rate_limit(self, key: str) -> Tuple[bool, Optional[RateLimitInfo]]:
-        """Check if request is allowed under rate limit.
-
-        Args:
-            key: Rate limit key (e.g. IP address, API key)
-
-        Returns:
-            Tuple of (allowed, limit_info)
-        """
-        if not self.enabled:
-            return True, None
-
-        try:
-            # Try Redis first if available
-            if self.redis:
-                return self._check_redis(key)
-            
-            # Fall back to disk cache
-            return self._check_disk(key)
-
-        except Exception as e:
-            logger.error(f"Rate limit check failed: {e}")
-            return True, None
-
-    def get_limit_info(self, key: str) -> Optional[RateLimitInfo]:
-        """Get current rate limit information.
-
-        Args:
-            key: Rate limit key
-
-        Returns:
-            Rate limit information if available
-        """
-        try:
-            if self.redis:
-                redis_key = self._get_redis_key(key)
-                pipe = self.redis.pipeline()
-                pipe.get(redis_key)
-                pipe.ttl(redis_key)
-                current, ttl = pipe.execute()
-
-                if current is None:
-                    return None
-
-                return RateLimitInfo(
-                    key=key,
-                    window_start=time.time() - (self.window_size - ttl),
-                    request_count=int(current),
-                    window_size=self.window_size,
-                    max_requests=self.max_requests,
-                )
-            else:
-                info = rate_cache.get(key)
-                if info:
-                    return RateLimitInfo.from_dict(info)
-                return None
-
-        except Exception as e:
-            logger.error(f"Failed to get limit info: {e}")
-            return None
-
-    def reset_limit(self, key: str) -> None:
+                
+            except Exception as e:
+                logger.error(f"Error checking rate limit: {e}")
+                return True, None  # Allow request on error
+    
+    def reset(self, key: str) -> None:
         """Reset rate limit for key.
-
+        
         Args:
             key: Rate limit key
         """
         try:
-            if self.redis:
-                self.redis.delete(self._get_redis_key(key))
-            else:
-                rate_cache.delete(key)
-
+            path = self._get_path(key)
+            if os.path.exists(path):
+                os.remove(path)
+                
         except Exception as e:
-            logger.error(f"Failed to reset limit: {e}")
-
-
-class SecurityManager:
-    """Security manager for API search."""
-
-    def __init__(self):
-        """Initialize security manager."""
-        self.rate_limiter = RateLimiter()
-        self.blocked_ips: Set[str] = set()
-        self.suspicious_patterns = [
-            r"(?i)(union|select|insert|update|delete|drop)\s+",  # SQL injection
-            r"(?i)<script",  # XSS
-            r"(?i)../../",  # Path traversal
-            r"(?i)\{\{.*\}\}",  # Template injection
-        ]
-
-    def check_request(
-        self,
-        ip: str,
-        query: str,
-        api_key: Optional[str] = None,
-    ) -> Tuple[bool, str]:
-        """Check if request should be allowed.
-
-        Args:
-            ip: Client IP address
-            query: Search query
-            api_key: Optional API key
-
-        Returns:
-            Tuple of (allowed, reason)
-        """
+            logger.error(f"Error resetting rate limit: {e}")
+    
+    def clear(self) -> None:
+        """Clear all rate limits."""
         try:
-            # Check blocked IPs
-            if ip in self.blocked_ips:
-                return False, "IP address is blocked"
-
-            # Check rate limit
-            allowed, info = self.rate_limiter.check_rate_limit(ip)
-            if not allowed:
-                return False, "Rate limit exceeded"
-
-            # Check for suspicious patterns
-            for pattern in self.suspicious_patterns:
-                if re.search(pattern, query):
-                    self.blocked_ips.add(ip)
-                    return False, "Suspicious query pattern detected"
-
-            # Validate API key if required
-            if config_instance.require_api_key and not api_key:
-                return False, "API key required"
-
-            return True, "Request allowed"
-
+            for filename in os.listdir(self.storage_dir):
+                path = os.path.join(self.storage_dir, filename)
+                try:
+                    if os.path.isfile(path):
+                        os.remove(path)
+                except Exception as e:
+                    logger.error(f"Error removing rate limit file {path}: {e}")
+                    
         except Exception as e:
-            logger.error(f"Security check failed: {e}")
-            return False, "Security check failed"
-
-    def unblock_ip(self, ip: str) -> None:
-        """Unblock an IP address.
-
-        Args:
-            ip: IP address to unblock
-        """
-        try:
-            self.blocked_ips.discard(ip)
-            self.rate_limiter.reset_limit(ip)
-        except Exception as e:
-            logger.error(f"Failed to unblock IP: {e}")
+            logger.error(f"Error clearing rate limits: {e}")
 
 
-# Global instances
+# Default rate limiter instance
 rate_limiter = RateLimiter()
-security_manager = SecurityManager()
 
-__all__ = ["rate_limiter", "security_manager", "RateLimitInfo"] 
+__all__ = ["RateLimiter", "RateLimitInfo", "rate_limiter"] 
