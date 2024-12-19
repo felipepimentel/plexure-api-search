@@ -34,8 +34,14 @@ class VectorStore(BaseService):
             # Initialize FAISS index with ID support
             base_index = faiss.IndexFlatIP(self.dimension)
             self.index = faiss.IndexIDMap(base_index)
-            logger.info("Vector store initialized")
+            
+            # Log initialization
+            logger.info(f"Vector store initialized with dimension {self.dimension}")
+            logger.debug(f"Using index type: {type(self.index).__name__}")
+            logger.debug(f"Using base index type: {type(base_index).__name__}")
+            
             self.initialized = True
+            
         except Exception as e:
             logger.error(f"Failed to initialize vector store: {e}")
             self.metrics.increment("vector_store_errors")
@@ -43,9 +49,12 @@ class VectorStore(BaseService):
 
     def cleanup(self) -> None:
         """Clean up vector store."""
-        self.vectors = []
-        self.initialized = False
-        logger.info("Vector store cleaned up")
+        if self.initialized:
+            # Reset index
+            self.index = None
+            self.initialized = False
+            self.next_id = 0
+            logger.info("Vector store cleaned up")
 
     def health_check(self) -> Dict[str, bool]:
         """Check service health.
@@ -132,17 +141,17 @@ class VectorStore(BaseService):
 
     def search_vectors(
         self,
-        query_vector: Union[np.ndarray, List[float]],
-        k: int = 10,
+        query_vector: Union[List[float], np.ndarray],
+        top_k: int = 10,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Search for similar vectors.
         
         Args:
             query_vector: Query vector
-            k: Number of results
+            top_k: Number of results to return
             
         Returns:
-            Distances and indices of similar vectors
+            Tuple of (distances, indices)
         """
         if not self.initialized:
             self.initialize()
@@ -154,30 +163,40 @@ class VectorStore(BaseService):
 
             # Ensure 2D array
             if len(query_vector.shape) == 1:
-                query_vector = np.array([query_vector])
+                query_vector = query_vector.reshape(1, -1)
 
             # Convert to float32
             query_vector = query_vector.astype(np.float32)
 
-            # Log query vector shape
-            logger.debug(f"Query vector shape: {query_vector.shape}")
-
             # Validate dimensions
             if query_vector.shape[1] != self.dimension:
-                raise ValueError(
-                    f"Vector dimension mismatch: {query_vector.shape[1]} != {self.dimension}"
-                )
+                raise ValueError(f"Query vector dimension {query_vector.shape[1]} does not match expected dimension {self.dimension}")
 
-            # Search
-            start_time = self.metrics.start_timer()
-            distances, indices = self.index.search(query_vector, k)
-            self.metrics.stop_timer(start_time, "vector_search")
+            # Normalize query vector
+            faiss.normalize_L2(query_vector)
+
+            # Log query info
+            logger.debug(f"Searching with query vector shape: {query_vector.shape}")
+            logger.debug(f"Query vector type: {query_vector.dtype}")
+
+            # Search index
+            distances, indices = self.index.search(query_vector, top_k)
+
+            # Log results
+            logger.debug(f"Found {len(indices[0])} results")
+            logger.debug(f"Distance range: {np.min(distances)} to {np.max(distances)}")
+
+            # Update metrics
+            self.metrics.increment(
+                "vectors_searched",
+                {"count": 1},
+            )
 
             return distances[0], indices[0]
 
         except Exception as e:
             logger.error(f"Failed to search vectors: {e}")
-            self.metrics.increment("vector_search_errors")
+            self.metrics.increment("vector_store_errors")
             raise
 
 # Global instance

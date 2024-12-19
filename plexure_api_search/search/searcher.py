@@ -11,6 +11,7 @@ from ..config import config_instance
 from ..monitoring.metrics import MetricsManager
 from ..services.models import model_service
 from ..services.vector_store import vector_store
+from ..indexing import api_indexer
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +50,21 @@ class APISearcher:
         self,
         query: str,
         top_k: int = 10,
+        min_score: float = 0.3,
+        expand_query: bool = True,
+        rerank_results: bool = True,
     ) -> List[Dict[str, Any]]:
         """Search for API endpoints.
         
         Args:
             query: Search query
             top_k: Number of results to return
+            min_score: Minimum similarity score
+            expand_query: Whether to expand query
+            rerank_results: Whether to rerank results
             
         Returns:
-            List of search results with scores
+            List of search results with scores and metadata
         """
         if not self.initialized:
             self.initialize()
@@ -76,16 +83,27 @@ class APISearcher:
             results = []
             for i, (distance, index) in enumerate(zip(distances, indices)):
                 if index >= 0:  # Skip invalid indices
-                    results.append({
-                        "score": float(1.0 - distance),  # Convert distance to similarity
-                        "index": int(index),
-                    })
+                    score = float(1.0 - distance)  # Convert distance to similarity
+                    if score >= min_score:
+                        # Get endpoint metadata
+                        metadata = api_indexer.endpoint_metadata.get(int(index), {})
+                        result = {
+                            "score": score,
+                            "method": metadata.get("method", ""),
+                            "endpoint": metadata.get("path", ""),
+                            "description": metadata.get("description", ""),
+                            "summary": metadata.get("summary", ""),
+                            "parameters": metadata.get("parameters", []),
+                            "responses": metadata.get("responses", {}),
+                            "tags": metadata.get("tags", []),
+                        }
+                        results.append(result)
 
-            # Stop timer
-            self.metrics.stop_timer(start_time, "search")
+            # Stop timer and update metrics
+            self.metrics.stop_timer(start_time, "search", {"operation": "search"})
             self.metrics.increment(
                 "searches_performed",
-                {"results": len(results)},
+                {"status": "success", "count": len(results)},
             )
 
             return results

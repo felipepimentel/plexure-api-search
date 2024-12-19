@@ -27,6 +27,7 @@ class APIIndexer:
         self.metrics = MetricsManager()
         self.initialized = False
         self.next_id = 0
+        self.endpoint_metadata = {}
 
     def initialize(self) -> None:
         """Initialize indexer."""
@@ -243,6 +244,18 @@ class APIIndexer:
                 ids_array = np.ascontiguousarray(ids_array)
                 # Store vectors
                 vector_store.store_vectors(embeddings, ids_array)
+
+                # Store endpoint metadata
+                for i, endpoint in enumerate(endpoints):
+                    self.endpoint_metadata[ids[i]] = {
+                        "method": endpoint["method"],
+                        "path": endpoint["path"],
+                        "description": endpoint.get("description", ""),
+                        "summary": endpoint.get("summary", ""),
+                        "parameters": endpoint.get("parameters", []),
+                        "responses": endpoint.get("responses", {}),
+                        "tags": endpoint.get("tags", []),
+                    }
 
             # Stop timer
             self.metrics.stop_timer(start_time, "indexing")

@@ -75,84 +75,66 @@ class MetricsManager:
 
         try:
             # Initialize metrics
+            self.endpoints_indexed = Counter(
+                "endpoints_indexed",
+                "Number of endpoints indexed",
+                ["status"],
+            )
+
+            self.searches_performed = Counter(
+                "searches_performed",
+                "Number of searches performed",
+                ["status"],
+            )
+
+            self.indexing_errors = Counter(
+                "indexing_errors",
+                "Number of indexing errors",
+            )
+
+            self.search_errors = Counter(
+                "search_errors",
+                "Number of search errors",
+            )
+
+            self.vector_store_errors = Counter(
+                "vector_store_errors",
+                "Number of vector store errors",
+            )
+
+            self.model_errors = Counter(
+                "model_errors",
+                "Number of model errors",
+                ["model"],
+            )
+
+            self.index_size = Gauge(
+                "index_size",
+                "Number of vectors in index",
+            )
+
+            self.model_loaded = Gauge(
+                "model_loaded",
+                "Whether model is loaded",
+                ["model"],
+            )
+
+            self.indexing_latency = Histogram(
+                "indexing_latency_seconds",
+                "Time spent indexing",
+                ["operation"],
+            )
+
             self.search_latency = Histogram(
                 "search_latency_seconds",
-                "Search request latency in seconds",
-                ["endpoint"],
-            )
-
-            self.index_latency = Histogram(
-                "index_latency_seconds",
-                "Index operation latency in seconds",
+                "Time spent searching",
                 ["operation"],
             )
 
-            self.search_requests = Counter(
-                "search_requests_total",
-                "Total number of search requests",
-                ["endpoint", "status"],
-            )
-
-            self.index_operations = Counter(
-                "index_operations_total",
-                "Total number of index operations",
-                ["operation", "status"],
-            )
-
-            self.cache_hits = Counter(
-                "cache_hits_total",
-                "Total number of cache hits",
-                ["cache"],
-            )
-
-            self.cache_misses = Counter(
-                "cache_misses_total",
-                "Total number of cache misses",
-                ["cache"],
-            )
-
-            self.model_load_time = Histogram(
-                "model_load_seconds",
-                "Model loading time in seconds",
-                ["model"],
-            )
-
-            self.model_inference_time = Histogram(
-                "model_inference_seconds",
-                "Model inference time in seconds",
-                ["model"],
-            )
-
-            self.vector_store_operations = Counter(
-                "vector_store_operations_total",
-                "Total number of vector store operations",
-                ["operation", "status"],
-            )
-
-            self.vector_store_latency = Histogram(
-                "vector_store_latency_seconds",
-                "Vector store operation latency in seconds",
-                ["operation"],
-            )
-
-            self.api_files = Gauge(
-                "api_files_total",
-                "Total number of API files indexed",
-            )
-
-            self.api_endpoints = Gauge(
-                "api_endpoints_total",
-                "Total number of API endpoints indexed",
-            )
-
-            self.memory_usage = Gauge(
-                "memory_usage_bytes",
-                "Memory usage in bytes",
-            )
-
-            self.cpu_usage = Gauge(
-                "cpu_usage_percent",
-                "CPU usage percentage",
+            self.model_latency = Histogram(
+                "model_latency_seconds",
+                "Time spent in model operations",
+                ["model", "operation"],
             )
 
             # Start metrics server if enabled
@@ -189,53 +171,66 @@ class MetricsManager:
     def stop_timer(
         self,
         start_time: float,
-        metric: str,
+        operation: str,
         labels: Optional[Dict[str, str]] = None,
     ) -> None:
         """Stop a timer and record duration.
         
         Args:
             start_time: Start time from start_timer()
-            metric: Metric name
-            labels: Metric labels
+            operation: Operation being timed
+            labels: Optional metric labels
         """
         duration = time.time() - start_time
         labels = labels or {}
 
-        if metric == "search":
-            self.search_latency.labels(**labels).observe(duration)
-        elif metric == "index":
-            self.index_latency.labels(**labels).observe(duration)
-        elif metric == "model_load":
-            self.model_load_time.labels(**labels).observe(duration)
-        elif metric == "model_inference":
-            self.model_inference_time.labels(**labels).observe(duration)
-        elif metric == "vector_store":
-            self.vector_store_latency.labels(**labels).observe(duration)
+        try:
+            if operation == "indexing":
+                self.indexing_latency.labels(operation=operation).observe(duration)
+            elif operation == "search":
+                self.search_latency.labels(operation=operation).observe(duration)
+            elif operation == "model_encode":
+                self.model_latency.labels(
+                    model=labels.get("model", "unknown"),
+                    operation=operation,
+                ).observe(duration)
+        except Exception as e:
+            logger.error(f"Failed to record duration: {e}")
 
     def increment(
         self,
         metric: str,
         labels: Optional[Dict[str, str]] = None,
     ) -> None:
-        """Increment a counter metric.
+        """Increment a counter.
         
         Args:
-            metric: Metric name
-            labels: Metric labels
+            metric: Name of metric to increment
+            labels: Optional metric labels
         """
         labels = labels or {}
 
-        if metric == "search_requests":
-            self.search_requests.labels(**labels).inc()
-        elif metric == "index_operations":
-            self.index_operations.labels(**labels).inc()
-        elif metric == "cache_hits":
-            self.cache_hits.labels(**labels).inc()
-        elif metric == "cache_misses":
-            self.cache_misses.labels(**labels).inc()
-        elif metric == "vector_store_operations":
-            self.vector_store_operations.labels(**labels).inc()
+        try:
+            if metric == "endpoints_indexed":
+                self.endpoints_indexed.labels(
+                    status=labels.get("status", "success"),
+                ).inc(labels.get("count", 1))
+            elif metric == "searches_performed":
+                self.searches_performed.labels(
+                    status=labels.get("status", "success"),
+                ).inc(labels.get("count", 1))
+            elif metric == "indexing_errors":
+                self.indexing_errors.inc()
+            elif metric == "search_errors":
+                self.search_errors.inc()
+            elif metric == "vector_store_errors":
+                self.vector_store_errors.inc()
+            elif metric == "model_errors":
+                self.model_errors.labels(
+                    model=labels.get("model", "unknown"),
+                ).inc()
+        except Exception as e:
+            logger.error(f"Failed to increment metric: {e}")
 
     def set_gauge(
         self,
@@ -243,23 +238,24 @@ class MetricsManager:
         value: float,
         labels: Optional[Dict[str, str]] = None,
     ) -> None:
-        """Set a gauge metric value.
+        """Set a gauge value.
         
         Args:
-            metric: Metric name
-            value: Metric value
-            labels: Metric labels
+            metric: Name of metric to set
+            value: Value to set
+            labels: Optional metric labels
         """
         labels = labels or {}
 
-        if metric == "api_files":
-            self.api_files.set(value)
-        elif metric == "api_endpoints":
-            self.api_endpoints.set(value)
-        elif metric == "memory_usage":
-            self.memory_usage.set(value)
-        elif metric == "cpu_usage":
-            self.cpu_usage.set(value)
+        try:
+            if metric == "index_size":
+                self.index_size.set(value)
+            elif metric == "model_loaded":
+                self.model_loaded.labels(
+                    model=labels.get("model", "unknown"),
+                ).set(value)
+        except Exception as e:
+            logger.error(f"Failed to set gauge: {e}")
 
     def track_search(
         self,
@@ -299,8 +295,8 @@ class MetricsManager:
 
             # Update Prometheus metrics if enabled
             if config_instance.enable_telemetry:
-                self.search_latency.labels(endpoint=query).observe(latency)
-                self.search_requests.labels(endpoint=query, status="success").inc()
+                self.search_latency.labels(operation=query).observe(latency)
+                self.searches_performed.labels(status="success").inc()
                 self.results_returned.observe(num_results)
                 
                 if error:
