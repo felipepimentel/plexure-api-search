@@ -1,31 +1,26 @@
-"""Model service for managing embeddings and models."""
+"""Model service for text embeddings."""
 
 import logging
-import os
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Union
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from dependency_injector.wiring import inject
-from dependency_injector.providers import Provider
 
 from ..config import config_instance
 from ..monitoring.metrics import MetricsManager
-from .base import BaseService
 
 logger = logging.getLogger(__name__)
 
-class ModelService(BaseService):
-    """Model service for managing embeddings and models."""
+class ModelService:
+    """Model service for text embeddings."""
 
     def __init__(self):
         """Initialize model service."""
-        super().__init__()
-        self.models: Dict[str, SentenceTransformer] = {}
         self.metrics = MetricsManager()
+        self.model = None
+        self.dimension = 768  # Default dimension for all-MiniLM-L6-v2
         self.initialized = False
-        self.embedding_dim = config_instance.vectors.dimension
 
     def initialize(self) -> None:
         """Initialize model service."""
@@ -33,10 +28,14 @@ class ModelService(BaseService):
             return
 
         try:
-            # Load models
-            self.models["bi_encoder"] = self._load_model(config_instance.bi_encoder_model)
-            self.models["bi_encoder_fallback"] = self._load_model(config_instance.bi_encoder_fallback)
-            self.models["multilingual"] = self._load_model(config_instance.multilingual_model)
+            # Load model
+            model_name = config_instance.model_name
+            logger.info(f"Loading model: {model_name}")
+            self.model = SentenceTransformer(model_name)
+            
+            # Get embedding dimension
+            self.dimension = self.model.get_sentence_embedding_dimension()
+            logger.info(f"Model loaded with embedding dimension: {self.dimension}")
 
             self.initialized = True
             logger.info("Model service initialized")
@@ -47,151 +46,67 @@ class ModelService(BaseService):
 
     def cleanup(self) -> None:
         """Clean up model service."""
-        self.models.clear()
-        self.initialized = False
-        logger.info("Model service cleaned up")
-
-    def health_check(self) -> Dict[str, bool]:
-        """Check service health.
-        
-        Returns:
-            Health check results
-        """
-        return {
-            "initialized": self.initialized,
-            "models_loaded": len(self.models) > 0,
-        }
+        if self.model is not None:
+            self.model = None
+            self.initialized = False
+            logger.info("Model service cleaned up")
 
     def encode(
         self,
         texts: Union[str, List[str]],
-        model_name: str = "bi_encoder",
+        batch_size: int = 32,
         normalize: bool = True,
     ) -> np.ndarray:
-        """Encode texts using specified model.
+        """Encode texts to embeddings.
         
         Args:
             texts: Text or list of texts to encode
-            model_name: Name of model to use
-            normalize: Whether to normalize vectors
+            batch_size: Batch size for encoding
+            normalize: Whether to L2 normalize embeddings
             
         Returns:
-            Text embeddings
+            Array of embeddings (n_texts x dimension)
         """
         if not self.initialized:
             self.initialize()
 
         try:
-            # Get model
-            model = self.models.get(model_name)
-            if model is None:
-                logger.warning(f"Model {model_name} not found, using fallback")
-                model = self.models["bi_encoder_fallback"]
-
             # Convert single text to list
             if isinstance(texts, str):
                 texts = [texts]
 
-            # Clean and validate texts
-            cleaned_texts = []
-            for text in texts:
-                if not isinstance(text, str):
-                    text = str(text)
-                if not text.strip():
-                    text = "empty"
-                cleaned_texts.append(text)
-
-            logger.debug(f"Number of texts to encode: {len(cleaned_texts)}")
-            logger.debug(f"Sample text: {cleaned_texts[0] if cleaned_texts else 'No texts'}")
+            # Log encoding info
+            logger.debug(f"Encoding {len(texts)} texts")
+            logger.debug(f"Sample text: {texts[0][:100]}...")
 
             # Encode texts
-            start_time = self.metrics.start_timer()
-            embeddings = model.encode(
-                cleaned_texts,
-                normalize_embeddings=False,
+            embeddings = self.model.encode(
+                texts,
+                batch_size=batch_size,
+                normalize_embeddings=normalize,
                 show_progress_bar=False,
-                convert_to_numpy=True,
             )
 
-            # Convert to numpy array if needed
-            if not isinstance(embeddings, np.ndarray):
-                embeddings = np.array(embeddings)
+            # Convert to numpy array
+            embeddings = np.array(embeddings)
 
-            # Ensure 2D array
-            if len(embeddings.shape) == 1:
-                embeddings = np.array([embeddings])
+            # Log embedding info
+            logger.debug(f"Generated embeddings shape: {embeddings.shape}")
+            logger.debug(f"Embeddings type: {embeddings.dtype}")
+            if len(embeddings) > 0:
+                logger.debug(f"First embedding norm: {np.linalg.norm(embeddings[0])}")
 
-            logger.debug(f"Raw embeddings shape: {embeddings.shape}")
-            logger.debug(f"Raw embeddings type: {embeddings.dtype}")
-
-            # Resize if needed
-            if embeddings.shape[1] != self.embedding_dim:
-                logger.warning(f"Resizing embeddings from {embeddings.shape[1]} to {self.embedding_dim}")
-                resized = np.zeros((len(embeddings), self.embedding_dim), dtype=np.float32)
-                min_dim = min(embeddings.shape[1], self.embedding_dim)
-                resized[:, :min_dim] = embeddings[:, :min_dim]
-                embeddings = resized
-
-            logger.debug(f"Resized embeddings shape: {embeddings.shape}")
-            logger.debug(f"Resized embeddings type: {embeddings.dtype}")
-
-            # Ensure float32
-            embeddings = embeddings.astype(np.float32)
-
-            # Normalize if requested
-            if normalize:
-                norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-                norms[norms == 0] = 1
-                embeddings = embeddings / norms
-
-            # Ensure contiguous array
-            embeddings = np.ascontiguousarray(embeddings)
-
-            logger.debug(f"Final embeddings shape: {embeddings.shape}")
-            logger.debug(f"Final embeddings type: {embeddings.dtype}")
-            logger.debug(f"Final embeddings sample: {embeddings[0][:5] if len(embeddings) > 0 else 'No embeddings'}")
-            logger.debug(f"Final embeddings min: {np.min(embeddings)}")
-            logger.debug(f"Final embeddings max: {np.max(embeddings)}")
-            logger.debug(f"Final embeddings mean: {np.mean(embeddings)}")
-            logger.debug(f"Final embeddings is contiguous: {embeddings.flags['C_CONTIGUOUS']}")
-
-            self.metrics.stop_timer(
-                start_time,
-                "model_encode",
-                {"model": model_name},
+            # Update metrics
+            self.metrics.increment(
+                "texts_encoded",
+                {"count": len(texts), "batch_size": batch_size},
             )
 
             return embeddings
 
         except Exception as e:
             logger.error(f"Failed to encode texts: {e}")
-            self.metrics.increment("model_errors", {"model": model_name})
-            raise
-
-    def _load_model(self, model_name: str) -> SentenceTransformer:
-        """Load model from disk or download.
-        
-        Args:
-            model_name: Name of model to load
-            
-        Returns:
-            Loaded model
-        """
-        try:
-            # Load model
-            start_time = self.metrics.start_timer()
-            model = SentenceTransformer(model_name)
-            self.metrics.stop_timer(
-                start_time,
-                "model_load",
-                {"model": model_name},
-            )
-
-            return model
-
-        except Exception as e:
-            logger.error(f"Failed to load model {model_name}: {e}")
-            self.metrics.increment("model_errors", {"model": model_name})
+            self.metrics.increment("encoding_errors")
             raise
 
 # Global instance

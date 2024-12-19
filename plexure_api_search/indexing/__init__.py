@@ -1,5 +1,5 @@
-"""API indexing package."""
+"""API contract indexing."""
 
-from .indexer import APIIndexer, api_indexer
+from .indexer import APIContractIndexer, api_indexer
 
-__all__ = ["APIIndexer", "api_indexer"]
+__all__ = ["APIContractIndexer", "api_indexer"]

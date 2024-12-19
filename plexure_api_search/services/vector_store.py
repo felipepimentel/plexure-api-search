@@ -1,137 +1,115 @@
-"""Vector store service for managing vectors."""
+"""Vector store service."""
 
 import logging
+import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 
-import numpy as np
 import faiss
+import numpy as np
 from dependency_injector.wiring import inject
-from dependency_injector.providers import Provider
 
 from ..config import config_instance
 from ..monitoring.metrics import MetricsManager
-from .base import BaseService
+from .models import model_service
 
 logger = logging.getLogger(__name__)
 
-class VectorStore(BaseService):
-    """Vector store service for managing vectors."""
+class VectorStore:
+    """Vector store for embeddings."""
 
     def __init__(self):
         """Initialize vector store."""
-        super().__init__()
-        self.index = None
         self.metrics = MetricsManager()
+        self.index = None
+        self.dimension = None
         self.initialized = False
-        self.dimension = config_instance.vectors.dimension
-        self.next_id = 0
-        self.vectors = []
 
     def initialize(self) -> None:
         """Initialize vector store."""
+        if self.initialized:
+            return
+
         try:
-            # Initialize FAISS index with ID support
-            base_index = faiss.IndexFlatIP(self.dimension)
-            self.index = faiss.IndexIDMap(base_index)
-            
-            # Log initialization
-            logger.info(f"Vector store initialized with dimension {self.dimension}")
-            logger.debug(f"Using index type: {type(self.index).__name__}")
-            logger.debug(f"Using base index type: {type(base_index).__name__}")
-            
+            # Get dimension from model service
+            model_service.initialize()
+            self.dimension = model_service.dimension
+            logger.info(f"Using embedding dimension: {self.dimension}")
+
+            # Create index
+            self.index = faiss.IndexFlatIP(self.dimension)
+            logger.info(f"Created FAISS index with dimension {self.dimension}")
+
+            # Load existing index if available
+            index_path = self._get_index_path()
+            if index_path.exists():
+                logger.info(f"Loading existing index from {index_path}")
+                self.index = faiss.read_index(str(index_path))
+                logger.info(f"Loaded index with {self.index.ntotal} vectors")
+
             self.initialized = True
-            
+            logger.info("Vector store initialized")
+
         except Exception as e:
             logger.error(f"Failed to initialize vector store: {e}")
-            self.metrics.increment("vector_store_errors")
             raise
 
     def cleanup(self) -> None:
         """Clean up vector store."""
-        if self.initialized:
-            # Reset index
+        if self.index is not None:
+            # Save index
+            index_path = self._get_index_path()
+            logger.info(f"Saving index with {self.index.ntotal} vectors to {index_path}")
+            faiss.write_index(self.index, str(index_path))
+
             self.index = None
             self.initialized = False
-            self.next_id = 0
             logger.info("Vector store cleaned up")
 
-    def health_check(self) -> Dict[str, bool]:
-        """Check service health.
-        
-        Returns:
-            Health check results
-        """
-        return {
-            "initialized": self.initialized,
-            "vectors_ready": len(self.vectors) > 0,
-        }
-
-    def store_vectors(
-        self,
-        vectors: Union[List[List[float]], np.ndarray],
-        ids: Optional[Union[List[int], np.ndarray]] = None,
-    ) -> None:
-        """Store vectors in the index.
+    def store_vectors(self, vectors: np.ndarray, ids: Optional[np.ndarray] = None) -> None:
+        """Store vectors in index.
         
         Args:
-            vectors: List of vectors or numpy array
-            ids: Optional list of IDs or numpy array
+            vectors: Vectors to store (n_vectors x dimension)
+            ids: Optional vector IDs (n_vectors)
         """
         if not self.initialized:
             self.initialize()
 
         try:
-            # Convert vectors to numpy array if needed
-            if isinstance(vectors, list):
-                vectors = np.array(vectors)
-
-            # Ensure vectors are 2D array
-            if len(vectors.shape) == 1:
-                vectors = vectors.reshape(1, -1)
-
-            # Convert to float32
-            vectors = vectors.astype(np.float32)
-
-            # Validate dimensions
+            # Validate inputs
+            if vectors.ndim != 2:
+                raise ValueError(f"Expected 2D array, got shape {vectors.shape}")
             if vectors.shape[1] != self.dimension:
-                raise ValueError(f"Vector dimension {vectors.shape[1]} does not match expected dimension {self.dimension}")
-
-            # Normalize vectors
-            faiss.normalize_L2(vectors)
+                raise ValueError(
+                    f"Expected vectors with dimension {self.dimension}, got {vectors.shape[1]}"
+                )
+            if ids is not None and len(ids) != len(vectors):
+                raise ValueError(
+                    f"Number of IDs ({len(ids)}) does not match number of vectors ({len(vectors)})"
+                )
 
             # Log vector info
             logger.debug(f"Adding {len(vectors)} vectors to index")
             logger.debug(f"Vector shape: {vectors.shape}")
-            logger.debug(f"Vector type: {vectors.dtype}")
-
-            # Handle IDs
             if ids is not None:
-                # Convert IDs to numpy array if needed
-                if isinstance(ids, list):
-                    ids = np.array(ids)
-                # Ensure IDs are 1D array
-                ids = ids.flatten()
-                # Convert to int64
-                ids = ids.astype(np.int64)
-                # Log ID info
-                logger.debug(f"Number of IDs: {len(ids)}")
                 logger.debug(f"ID array shape: {ids.shape}")
                 logger.debug(f"ID array type: {ids.dtype}")
                 logger.debug(f"Sample IDs: {ids[:5] if len(ids) > 5 else ids}")
-                # Validate ID count
-                if len(ids) != len(vectors):
-                    raise ValueError(f"Number of IDs ({len(ids)}) does not match number of vectors ({len(vectors)})")
-                # Add vectors with IDs
+
+            # Add vectors
+            if ids is not None:
                 self.index.add_with_ids(vectors, ids)
             else:
-                # Add vectors without IDs
                 self.index.add(vectors)
+
+            logger.info(f"Added {len(vectors)} vectors to index")
+            logger.debug(f"Index now contains {self.index.ntotal} vectors")
 
             # Update metrics
             self.metrics.increment(
                 "vectors_stored",
-                {"count": len(vectors)},
+                {"count": len(vectors), "total": self.index.ntotal},
             )
 
         except Exception as e:
@@ -140,15 +118,13 @@ class VectorStore(BaseService):
             raise
 
     def search_vectors(
-        self,
-        query_vector: Union[List[float], np.ndarray],
-        top_k: int = 10,
+        self, query_vector: np.ndarray, k: int = 10
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Search for similar vectors.
         
         Args:
             query_vector: Query vector
-            top_k: Number of results to return
+            k: Number of results to return
             
         Returns:
             Tuple of (distances, indices)
@@ -157,47 +133,64 @@ class VectorStore(BaseService):
             self.initialize()
 
         try:
-            # Convert to numpy array if needed
-            if isinstance(query_vector, list):
-                query_vector = np.array(query_vector)
+            # Validate input
+            if query_vector.ndim != 1:
+                raise ValueError(f"Expected 1D array, got shape {query_vector.shape}")
+            if len(query_vector) != self.dimension:
+                raise ValueError(
+                    f"Expected vector with dimension {self.dimension}, got {len(query_vector)}"
+                )
 
-            # Ensure 2D array
-            if len(query_vector.shape) == 1:
-                query_vector = query_vector.reshape(1, -1)
+            # Reshape query vector
+            query_vector = query_vector.reshape(1, -1)
 
-            # Convert to float32
-            query_vector = query_vector.astype(np.float32)
-
-            # Validate dimensions
-            if query_vector.shape[1] != self.dimension:
-                raise ValueError(f"Query vector dimension {query_vector.shape[1]} does not match expected dimension {self.dimension}")
-
-            # Normalize query vector
-            faiss.normalize_L2(query_vector)
-
-            # Log query info
-            logger.debug(f"Searching with query vector shape: {query_vector.shape}")
-            logger.debug(f"Query vector type: {query_vector.dtype}")
-
-            # Search index
-            distances, indices = self.index.search(query_vector, top_k)
+            # Search
+            distances, indices = self.index.search(query_vector, k)
+            
+            # Get first row since we only have one query vector
+            distances = distances[0]
+            indices = indices[0]
 
             # Log results
-            logger.debug(f"Found {len(indices[0])} results")
-            logger.debug(f"Distance range: {np.min(distances)} to {np.max(distances)}")
+            logger.debug(f"Found {len(indices)} results")
+            if len(indices) > 0:
+                logger.debug(f"Distance range: {np.min(distances)} to {np.max(distances)}")
 
-            # Update metrics
-            self.metrics.increment(
-                "vectors_searched",
-                {"count": 1},
-            )
-
-            return distances[0], indices[0]
+            return distances, indices
 
         except Exception as e:
             logger.error(f"Failed to search vectors: {e}")
+            self.metrics.increment("vector_search_errors")
+            raise
+
+    def clear(self) -> None:
+        """Clear the vector store."""
+        if not self.initialized:
+            self.initialize()
+
+        try:
+            # Reset index
+            self.index = faiss.IndexFlatIP(self.dimension)
+            logger.info("Cleared vector store")
+
+            # Delete saved index
+            index_path = self._get_index_path()
+            if index_path.exists():
+                index_path.unlink()
+                logger.info(f"Deleted saved index at {index_path}")
+
+            self.metrics.increment("vector_store_cleared")
+
+        except Exception as e:
+            logger.error(f"Failed to clear vector store: {e}")
             self.metrics.increment("vector_store_errors")
             raise
+
+    def _get_index_path(self) -> Path:
+        """Get path to saved index file."""
+        cache_dir = Path(config_instance.cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / "faiss.index"
 
 # Global instance
 vector_store = VectorStore() 

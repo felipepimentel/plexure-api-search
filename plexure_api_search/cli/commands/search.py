@@ -20,7 +20,7 @@ console = Console()
 @click.option(
     "--min-score",
     type=float,
-    default=0.3,
+    default=0.1,
     help="Minimum similarity score (0.0 to 1.0)",
 )
 @click.option(

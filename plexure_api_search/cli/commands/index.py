@@ -1,46 +1,58 @@
-"""Index command for indexing API contracts."""
+"""Index command."""
+
+import logging
+import os
+from pathlib import Path
+from typing import Optional
 
 import click
-from rich.console import Console
-from rich.table import Table
 
-from ...config import config_instance
 from ...indexing import api_indexer
+from ...utils.file import find_api_files
 
-console = Console()
+logger = logging.getLogger(__name__)
 
 @click.command()
 @click.option(
     "--directory",
-    type=str,
-    help="Directory containing API files",
+    "-d",
+    help="Directory containing API contracts",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
 )
-def index(directory: str = None):
+@click.option(
+    "--clear",
+    "-c",
+    is_flag=True,
+    help="Clear existing index before indexing",
+)
+def index(directory: Optional[str] = None, clear: bool = False) -> None:
     """Index API contracts."""
     try:
-        # Run indexing
-        results = api_indexer.index_directory(directory)
+        # Initialize indexer
+        api_indexer.initialize()
 
-        # Display results
-        table = Table(title="Indexing Results")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="green")
+        # Clear index if requested
+        if clear:
+            logger.info("Clearing existing index")
+            api_indexer.clear()
 
-        table.add_row("Total Files", str(results["total_files"]))
-        table.add_row("Total Endpoints", str(results["total_endpoints"]))
-        table.add_row("Failed Files", str(len(results["failed_files"])))
+        # Find API files
+        files = find_api_files(directory)
+        if not files:
+            logger.warning("No API files found")
+            return
 
-        console.print(table)
+        logger.info(f"Found {len(files)} API files")
+        for file in files:
+            logger.debug(f"Found API file: {file}")
 
-        # Show failures if any
-        if results["failed_files"]:
-            console.print("\nFailed Files:", style="red")
-            for failure in results["failed_files"]:
-                console.print(
-                    f"  {failure['path']}: {failure['error']}",
-                    style="red",
-                )
+        # Index contracts
+        api_indexer.index_contracts(files)
+        logger.info("Indexing completed successfully")
 
     except Exception as e:
-        console.print(f"Error: {e}", style="red")
-        raise click.Abort()
+        logger.error(f"Failed to index: {e}")
+        raise click.ClickException(str(e))
+
+    finally:
+        api_indexer.cleanup()

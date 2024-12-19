@@ -1,33 +1,30 @@
-"""API contract indexing and vector creation."""
+"""API contract indexer."""
 
-import json
 import logging
-import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 import numpy as np
-import yaml
 from dependency_injector.wiring import inject
-from dependency_injector.providers import Provider
 
 from ..config import config_instance
 from ..monitoring.metrics import MetricsManager
 from ..services.models import model_service
 from ..services.vector_store import vector_store
-from ..utils.file import find_api_files
+from .parser import APIContractParser
 
 logger = logging.getLogger(__name__)
 
-class APIIndexer:
+class APIContractIndexer:
     """API contract indexer."""
 
     def __init__(self):
         """Initialize indexer."""
         self.metrics = MetricsManager()
-        self.initialized = False
+        self.parser = APIContractParser()
+        self.endpoint_metadata = {}  # type: Dict[int, Dict[str, Any]]
         self.next_id = 0
-        self.endpoint_metadata = {}
+        self.initialized = False
 
     def initialize(self) -> None:
         """Initialize indexer."""
@@ -49,20 +46,16 @@ class APIIndexer:
         """Clean up indexer."""
         model_service.cleanup()
         vector_store.cleanup()
+        self.endpoint_metadata = {}
+        self.next_id = 0
         self.initialized = False
         logger.info("Indexer cleaned up")
 
-    def index_directory(
-        self,
-        directory: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Index all API files in directory.
+    def index_contracts(self, contract_paths: List[str]) -> None:
+        """Index API contracts.
         
         Args:
-            directory: Directory to process (default: config.api_dir)
-            
-        Returns:
-            Dictionary with indexing results
+            contract_paths: List of paths to API contract files
         """
         if not self.initialized:
             self.initialize()
@@ -71,119 +64,31 @@ class APIIndexer:
             # Start timer
             start_time = self.metrics.start_timer()
 
-            # Find API files
-            files = find_api_files(directory)
-            if not files:
-                logger.warning("No API files found")
-                return {
-                    "total_files": 0,
-                    "total_endpoints": 0,
-                    "failed_files": [],
-                    "indexed_apis": [],
-                }
-
-            # Process each file
-            total_endpoints = 0
-            failed_files = []
-            indexed_apis = []
-
-            for file_path in files:
+            # Process each contract
+            for path in contract_paths:
+                logger.info(f"Processing contract: {path}")
                 try:
-                    # Load API spec
-                    with open(file_path) as f:
-                        if file_path.endswith('.yaml') or file_path.endswith('.yml'):
-                            spec_data = yaml.safe_load(f)
-                        elif file_path.endswith('.json'):
-                            spec_data = json.load(f)
-                        else:
-                            continue
-
-                    logger.debug(f"Processing file: {file_path}")
-                    logger.debug(f"Spec data keys: {list(spec_data.keys())}")
-
-                    # Extract endpoints
-                    endpoints = []
-                    paths = spec_data.get("paths", {})
-                    
-                    logger.debug(f"Found {len(paths)} paths in {file_path}")
-                    
-                    for path, path_data in paths.items():
-                        if not isinstance(path_data, dict):
-                            logger.warning(f"Invalid path data for {path}: {path_data}")
-                            continue
-                            
-                        logger.debug(f"Processing path: {path}")
-                        logger.debug(f"Path data keys: {list(path_data.keys())}")
-                        
-                        for method, endpoint_data in path_data.items():
-                            if method == "parameters" or not isinstance(endpoint_data, dict):
-                                continue
-
-                            logger.debug(f"Processing method: {method}")
-                            logger.debug(f"Endpoint data keys: {list(endpoint_data.keys())}")
-
-                            # Extract endpoint information
-                            description = endpoint_data.get("description", "")
-                            if not description:
-                                description = endpoint_data.get("summary", "")
-
-                            # Create endpoint metadata with consistent structure
-                            endpoint = {
-                                "path": path,
-                                "method": method.upper(),
-                                "description": description,
-                                "tags": endpoint_data.get("tags", []),
-                                "parameters": [],  # We'll handle parameters later
-                                "responses": endpoint_data.get("responses", {}),
-                                "operationId": endpoint_data.get("operationId", ""),
-                                "summary": endpoint_data.get("summary", ""),
-                                "security": endpoint_data.get("security", [])
-                            }
-                            endpoints.append(endpoint)
-                            logger.debug(f"Added endpoint: {method.upper()} {path}")
+                    # Parse contract
+                    endpoints = self.parser.parse_contract(path)
+                    logger.info(f"Found {len(endpoints)} endpoints in {path}")
 
                     # Index endpoints
-                    if endpoints:
-                        logger.debug(f"Indexing {len(endpoints)} endpoints from {file_path}")
-                        try:
-                            self.index_endpoints(endpoints)
-                            total_endpoints += len(endpoints)
-                            indexed_apis.append({
-                                "path": file_path,
-                                "endpoints": len(endpoints),
-                            })
-                        except Exception as e:
-                            logger.error(f"Failed to index endpoints from {file_path}: {e}")
-                            failed_files.append({
-                                "path": file_path,
-                                "error": str(e),
-                            })
-                    else:
-                        logger.warning(f"No valid endpoints found in {file_path}")
-                        failed_files.append({
-                            "path": file_path,
-                            "error": "No valid endpoints found",
-                        })
+                    self.index_endpoints(endpoints)
 
                 except Exception as e:
-                    logger.error(f"Failed to index file {file_path}: {e}")
-                    failed_files.append({
-                        "path": file_path,
-                        "error": str(e),
-                    })
+                    logger.error(f"Failed to process contract {path}: {e}")
+                    self.metrics.increment("contract_errors")
+                    continue
 
             # Stop timer
-            self.metrics.stop_timer(start_time, "indexing")
-
-            return {
-                "total_files": len(files),
-                "total_endpoints": total_endpoints,
-                "failed_files": failed_files,
-                "indexed_apis": indexed_apis,
-            }
+            self.metrics.stop_timer(
+                start_time,
+                "index_contracts",
+                {"count": len(contract_paths)},
+            )
 
         except Exception as e:
-            logger.error(f"Failed to index directory: {e}")
+            logger.error(f"Failed to index contracts: {e}")
             self.metrics.increment("indexing_errors")
             raise
 
@@ -191,77 +96,94 @@ class APIIndexer:
         """Index API endpoints.
         
         Args:
-            endpoints: List of endpoint dictionaries
+            endpoints: List of endpoint metadata dicts
         """
-        if not self.initialized:
-            self.initialize()
+        if not endpoints:
+            logger.warning("No endpoints to index")
+            return
 
         try:
-            # Start timer
-            start_time = self.metrics.start_timer()
-
-            # Skip if no endpoints
-            if not endpoints:
-                logger.warning("No endpoints to index")
-                return
-
-            # Log endpoint info
-            logger.debug(f"Processing {len(endpoints)} endpoints")
-            for endpoint in endpoints:
-                logger.debug(f"Endpoint: {endpoint['method']} {endpoint['path']}")
-
-            # Create text list and IDs
+            # Prepare texts and metadata
             texts = []
             ids = []
             for endpoint in endpoints:
-                text = f"{endpoint['method']} {endpoint['path']} {endpoint.get('summary', '')} {endpoint.get('description', '')}"
+                # Build text representation
+                text_parts = []
+                
+                # Add method and path
+                method = endpoint.get("method", "").upper()
+                path = endpoint.get("path", "")
+                if method and path:
+                    text_parts.append(f"{method} {path}")
+                
+                # Add description
+                description = endpoint.get("description", "").strip()
+                if description:
+                    text_parts.append(description)
+                
+                # Add summary
+                summary = endpoint.get("summary", "").strip()
+                if summary and summary != description:
+                    text_parts.append(summary)
+                
+                # Add tags
+                tags = endpoint.get("tags", [])
+                if tags:
+                    text_parts.append(" ".join(tags))
+                
+                # Add parameters
+                params = endpoint.get("parameters", [])
+                if params:
+                    param_texts = []
+                    for param in params:
+                        param_text = f"{param.get('name', '')} ({param.get('in', '')})"
+                        param_desc = param.get("description", "").strip()
+                        if param_desc:
+                            param_text += f": {param_desc}"
+                        param_texts.append(param_text)
+                    text_parts.append(" Parameters: " + ", ".join(param_texts))
+                
+                # Add responses
+                responses = endpoint.get("responses", {})
+                if responses:
+                    response_texts = []
+                    for code, details in responses.items():
+                        desc = details.get("description", "").strip()
+                        if desc:
+                            response_texts.append(f"{code}: {desc}")
+                    if response_texts:
+                        text_parts.append(" Responses: " + ", ".join(response_texts))
+
+                # Combine all parts
+                text = " ".join(text_parts).strip()
+                if not text:
+                    logger.warning(f"Empty text for endpoint: {method} {path}")
+                    continue
+
+                # Store text and metadata
                 texts.append(text)
                 ids.append(self.next_id)
+                self.endpoint_metadata[self.next_id] = endpoint
                 self.next_id += 1
-                logger.debug(f"Added text: {text}")
-                logger.debug(f"Added ID: {ids[-1]}")
 
-            # Log texts and IDs
-            logger.debug(f"Number of texts: {len(texts)}")
-            logger.debug(f"Number of IDs: {len(ids)}")
-            logger.debug(f"Sample text: {texts[0] if texts else 'No texts'}")
-            logger.debug(f"Sample ID: {ids[0] if ids else 'No IDs'}")
-            logger.debug(f"ID range: {min(ids) if ids else 'N/A'} to {max(ids) if ids else 'N/A'}")
+            # Log indexing info
+            logger.info(f"Indexing {len(texts)} endpoints")
+            logger.debug("Sample endpoint texts:")
+            for i, text in enumerate(texts[:3]):
+                logger.debug(f"  {i+1}. {text[:100]}...")
 
-            # Generate embeddings in batch
+            # Generate embeddings
             embeddings = model_service.encode(texts)
             logger.debug(f"Generated embeddings shape: {embeddings.shape}")
-            logger.debug(f"Generated embeddings type: {embeddings.dtype}")
-            logger.debug(f"Generated embeddings sample: {embeddings[0][:5] if len(embeddings) > 0 else 'No embeddings'}")
 
             # Store vectors
-            if len(embeddings) > 0:
-                logger.debug(f"Storing {len(embeddings)} vectors with {len(ids)} IDs")
-                # Convert IDs to numpy array
-                ids_array = np.array(ids, dtype=np.int64)
-                # Ensure contiguous arrays
-                embeddings = np.ascontiguousarray(embeddings)
-                ids_array = np.ascontiguousarray(ids_array)
-                # Store vectors
-                vector_store.store_vectors(embeddings, ids_array)
+            vector_store.store_vectors(embeddings, np.array(ids))
+            logger.info(f"Stored {len(embeddings)} vectors")
 
-                # Store endpoint metadata
-                for i, endpoint in enumerate(endpoints):
-                    self.endpoint_metadata[ids[i]] = {
-                        "method": endpoint["method"],
-                        "path": endpoint["path"],
-                        "description": endpoint.get("description", ""),
-                        "summary": endpoint.get("summary", ""),
-                        "parameters": endpoint.get("parameters", []),
-                        "responses": endpoint.get("responses", {}),
-                        "tags": endpoint.get("tags", []),
-                    }
-
-            # Stop timer
-            self.metrics.stop_timer(start_time, "indexing")
+            # Update metrics
             self.metrics.increment(
                 "endpoints_indexed",
-                {"count": len(endpoints)},
+                {"count": len(texts)},
             )
 
         except Exception as e:
@@ -269,5 +191,26 @@ class APIIndexer:
             self.metrics.increment("indexing_errors")
             raise
 
+    def clear(self) -> None:
+        """Clear the index."""
+        if not self.initialized:
+            self.initialize()
+
+        try:
+            # Clear vector store
+            vector_store.clear()
+            
+            # Reset metadata
+            self.endpoint_metadata = {}
+            self.next_id = 0
+            
+            logger.info("Cleared index")
+            self.metrics.increment("index_cleared")
+
+        except Exception as e:
+            logger.error(f"Failed to clear index: {e}")
+            self.metrics.increment("indexing_errors")
+            raise
+
 # Global instance
-api_indexer = APIIndexer()
+api_indexer = APIContractIndexer()

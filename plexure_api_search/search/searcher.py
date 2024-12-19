@@ -50,7 +50,7 @@ class APISearcher:
         self,
         query: str,
         top_k: int = 10,
-        min_score: float = 0.3,
+        min_score: float = 0.1,
         expand_query: bool = True,
         rerank_results: bool = True,
     ) -> List[Dict[str, Any]]:
@@ -59,7 +59,7 @@ class APISearcher:
         Args:
             query: Search query
             top_k: Number of results to return
-            min_score: Minimum similarity score
+            min_score: Minimum similarity score (0.0 to 1.0)
             expand_query: Whether to expand query
             rerank_results: Whether to rerank results
             
@@ -73,20 +73,39 @@ class APISearcher:
             # Start timer
             start_time = self.metrics.start_timer()
 
+            # Log search parameters
+            logger.debug(f"Searching with query: {query}")
+            logger.debug(f"Parameters: top_k={top_k}, min_score={min_score}")
+
+            # Clean query
+            query = query.strip()
+            if not query:
+                logger.warning("Empty query")
+                return []
+
             # Generate query embedding
             query_embedding = model_service.encode(query)
+            logger.debug(f"Generated query embedding shape: {query_embedding.shape}")
 
             # Search vectors
             distances, indices = vector_store.search_vectors(query_embedding, top_k)
+            logger.debug(f"Raw search results: {len(indices)} indices, {len(distances)} distances")
+            if len(indices) > 0:
+                logger.debug(f"Distance range: {np.min(distances)} to {np.max(distances)}")
 
             # Create results
             results = []
             for i, (distance, index) in enumerate(zip(distances, indices)):
                 if index >= 0:  # Skip invalid indices
                     score = float(1.0 - distance)  # Convert distance to similarity
+                    logger.debug(f"Result {i}: index={index}, distance={distance}, score={score}")
                     if score >= min_score:
                         # Get endpoint metadata
                         metadata = api_indexer.endpoint_metadata.get(int(index), {})
+                        if not metadata:
+                            logger.warning(f"No metadata found for index {index}")
+                            continue
+
                         result = {
                             "score": score,
                             "method": metadata.get("method", ""),
@@ -98,6 +117,16 @@ class APISearcher:
                             "tags": metadata.get("tags", []),
                         }
                         results.append(result)
+                        logger.debug(f"Added result: {result['method']} {result['endpoint']}")
+
+            # Sort results by score
+            results.sort(key=lambda x: x["score"], reverse=True)
+
+            # Log results summary
+            logger.debug(f"Found {len(results)} results above threshold")
+            if results:
+                logger.debug(f"Top score: {results[0]['score']}")
+                logger.debug(f"Score range: {results[-1]['score']} to {results[0]['score']}")
 
             # Stop timer and update metrics
             self.metrics.stop_timer(start_time, "search", {"operation": "search"})
