@@ -1,5 +1,5 @@
-from .consistency import Consistency
-from .search_models import SearchResult
-from .searcher import APISearcher
+"""Search package."""
 
-__all__ = ["APISearcher", "Consistency", "SearchResult"]
+from .searcher import APISearcher, api_searcher
+
+__all__ = ["APISearcher", "api_searcher"] 

@@ -1,252 +1,193 @@
-"""Event service implementation."""
+"""Event service for publishing and subscribing to events."""
 
-import asyncio
+import json
 import logging
+import time
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Union
+
+from dependency_injector.wiring import inject
+from dependency_injector.providers import Provider
 
 import zmq
-import zmq.asyncio
-from dependency_injector.wiring import inject, provider
+from zmq.error import ZMQError
 
-from ..config import Config
-from ..monitoring.events import Event, EventType
-from ..monitoring.metrics import MetricsManager
-from .base import BaseService, ServiceException
+from ..config import config_instance
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class Event:
+    """Event data class."""
+    type: str
+    timestamp: datetime
+    component: str
+    description: str
+    error: Optional[str] = None
+    duration_ms: Optional[float] = None
+    success: bool = True
+    metadata: Optional[Dict[str, Any]] = None
 
-class EventService(BaseService[Event]):
-    """Base event service with common ZMQ functionality."""
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert event to dictionary."""
+        return {
+            "type": self.type,
+            "timestamp": self.timestamp.isoformat(),
+            "component": self.component,
+            "description": self.description,
+            "error": self.error,
+            "duration_ms": self.duration_ms,
+            "success": self.success,
+            "metadata": self.metadata or {},
+        }
 
-    def __init__(
-        self,
-        config: Config,
-        metrics_manager: MetricsManager,
-        service_name: str,
-    ) -> None:
-        """Initialize event service.
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Event":
+        """Create event from dictionary."""
+        data["timestamp"] = datetime.fromisoformat(data["timestamp"])
+        return cls(**data)
 
+class PublisherService:
+    """Event publisher service."""
+
+    def __init__(self):
+        """Initialize publisher service."""
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.PUB)
+        self.started = False
+        try:
+            self.socket.bind(f"tcp://*:{config_instance.publisher_port}")
+        except ZMQError as e:
+            if e.errno == 98:  # Address already in use
+                logger.warning(f"Publisher port {config_instance.publisher_port} already in use")
+            else:
+                logger.error(f"Failed to bind publisher socket: {e}")
+
+    def start(self) -> None:
+        """Start publisher service."""
+        if not self.started:
+            logger.info("Starting publisher service")
+            self.started = True
+
+    def stop(self) -> None:
+        """Stop publisher service."""
+        if self.started:
+            logger.info("Stopping publisher service")
+            self.socket.close()
+            self.context.term()
+            self.started = False
+
+    def emit(self, event: Event) -> None:
+        """Emit event.
+        
         Args:
-            config: Application configuration
-            metrics_manager: Metrics manager
-            service_name: Service name for identification
+            event: Event to emit.
         """
-        super().__init__(config, None, metrics_manager)
-        self.service_name = service_name
-        self.context = zmq.asyncio.Context()
-        self.socket = None
-        self._running = False
-        self._initialized = False
-
-    async def initialize(self) -> None:
-        """Initialize ZMQ resources."""
-        if self._initialized:
+        if not self.started:
+            logger.warning("Publisher service not started")
             return
 
         try:
-            # Configure socket in derived classes
-            await self._configure_socket()
-            self._initialized = True
-            logger.info(f"{self.service_name} initialized")
-
+            # Convert event to JSON
+            data = json.dumps(event.to_dict())
+            
+            # Send event
+            self.socket.send_string(data)
+            
+            logger.debug(f"Emitted event: {event.type}")
+            
         except Exception as e:
-            logger.error(f"Failed to initialize {self.service_name}: {e}")
-            raise ServiceException(
-                message=f"Failed to initialize {self.service_name}",
-                service_name=self.service_name,
-                error_code="INIT_FAILED",
-                details={"error": str(e)},
-            )
+            logger.error(f"Failed to emit event: {e}")
 
-    async def cleanup(self) -> None:
-        """Clean up ZMQ resources."""
-        if self.socket:
-            self.socket.close()
-        if self.context:
-            self.context.term()
-        self._initialized = False
-        logger.info(f"{self.service_name} cleaned up")
-
-    async def health_check(self) -> Dict[str, Any]:
-        """Check service health.
-
-        Returns:
-            Health check results
-        """
-        return {
-            "service": self.service_name,
-            "initialized": self._initialized,
-            "running": self._running,
-            "socket_bound": bool(self.socket),
-        }
-
-    async def _configure_socket(self) -> None:
-        """Configure ZMQ socket. Implemented by derived classes."""
-        raise NotImplementedError
-
-
-class PublisherService(EventService):
-    """Event publisher service."""
-
-    def __init__(
-        self,
-        config: Config,
-        metrics_manager: MetricsManager,
-    ) -> None:
-        """Initialize publisher service.
-
-        Args:
-            config: Application configuration
-            metrics_manager: Metrics manager
-        """
-        super().__init__(config, metrics_manager, "EventPublisher")
-        self.topic = b"events"
-
-    async def _configure_socket(self) -> None:
-        """Configure publisher socket."""
-        self.socket = self.context.socket(zmq.PUB)
-        self.socket.bind(f"tcp://*:{self.config.zmq_pub_port}")
-        await asyncio.sleep(0.1)  # Allow time for binding
-
-    async def publish(self, event: Event) -> None:
-        """Publish an event.
-
-        Args:
-            event: Event to publish
-        """
-        if not self._initialized:
-            await self.initialize()
-
-        try:
-            # Add publisher info
-            event.publisher = self.service_name
-            event.timestamp = datetime.now()
-
-            # Serialize and send
-            message = event.json().encode("utf-8")
-            await self.socket.send_multipart([self.topic, message])
-
-            # Update metrics
-            self.metrics.increment("events_published", 1, {"type": event.type.value})
-
-        except Exception as e:
-            logger.error(f"Failed to publish event: {e}")
-            self.metrics.increment("events_failed", 1, {"type": event.type.value})
-            raise ServiceException(
-                message="Failed to publish event",
-                service_name=self.service_name,
-                error_code="PUBLISH_FAILED",
-                details={"error": str(e), "event": event.dict()},
-            )
-
-
-class SubscriberService(EventService):
+class SubscriberService:
     """Event subscriber service."""
 
-    def __init__(
-        self,
-        config: Config,
-        metrics_manager: MetricsManager,
-    ) -> None:
-        """Initialize subscriber service.
-
-        Args:
-            config: Application configuration
-            metrics_manager: Metrics manager
-        """
-        super().__init__(config, metrics_manager, "EventSubscriber")
-        self.subscribed_types: Set[EventType] = set()
-        self.handlers: Dict[EventType, List[callable]] = {}
-        self._queue: asyncio.Queue = asyncio.Queue()
-
-    async def _configure_socket(self) -> None:
-        """Configure subscriber socket."""
+    def __init__(self):
+        """Initialize subscriber service."""
+        self.context = zmq.Context()
         self.socket = self.context.socket(zmq.SUB)
-        self.socket.connect(f"tcp://localhost:{self.config.zmq_pub_port}")
-        self.socket.setsockopt(zmq.SUBSCRIBE, b"events")
-        await asyncio.sleep(0.1)  # Allow time for connection
+        try:
+            self.socket.connect(f"tcp://localhost:{config_instance.publisher_port}")
+            self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        except ZMQError as e:
+            logger.warning(f"Failed to connect subscriber socket: {e}")
+        self.started = False
+        self.handlers: Dict[str, List[callable]] = {}
 
-    def subscribe(self, event_type: EventType, handler: callable) -> None:
-        """Subscribe to an event type.
+    def start(self) -> None:
+        """Start subscriber service."""
+        if not self.started:
+            logger.info("Starting subscriber service")
+            self.started = True
 
+    def stop(self) -> None:
+        """Stop subscriber service."""
+        if self.started:
+            logger.info("Stopping subscriber service")
+            self.socket.close()
+            self.context.term()
+            self.started = False
+
+    def subscribe(self, event_type: str, handler: callable) -> None:
+        """Subscribe to event type.
+        
         Args:
-            event_type: Event type to subscribe to
-            handler: Handler function for the event
+            event_type: Event type to subscribe to.
+            handler: Handler function to call when event is received.
         """
         if event_type not in self.handlers:
             self.handlers[event_type] = []
         self.handlers[event_type].append(handler)
-        self.subscribed_types.add(event_type)
+        logger.debug(f"Subscribed to event type: {event_type}")
 
-    async def start_listening(self) -> None:
-        """Start listening for events."""
-        if not self._initialized:
-            await self.initialize()
+    def unsubscribe(self, event_type: str, handler: callable) -> None:
+        """Unsubscribe from event type.
+        
+        Args:
+            event_type: Event type to unsubscribe from.
+            handler: Handler function to remove.
+        """
+        if event_type in self.handlers:
+            self.handlers[event_type].remove(handler)
+            logger.debug(f"Unsubscribed from event type: {event_type}")
 
-        self._running = True
+    def poll(self, timeout: int = 1000) -> Optional[Event]:
+        """Poll for events.
+        
+        Args:
+            timeout: Poll timeout in milliseconds.
+            
+        Returns:
+            Event if received, None if timeout.
+        """
+        if not self.started:
+            logger.warning("Subscriber service not started")
+            return None
+
         try:
-            while self._running:
-                if self.socket is None:
-                    await asyncio.sleep(0.1)
-                    continue
-
-                try:
-                    [topic, message] = await self.socket.recv_multipart()
-                    event = Event.parse_raw(message.decode("utf-8"))
-
-                    # Process event if we have handlers
-                    if event.type in self.handlers:
-                        for handler in self.handlers[event.type]:
-                            try:
-                                await handler(event)
-                                self.metrics.increment(
-                                    "events_processed",
-                                    1,
-                                    {"type": event.type.value},
-                                )
-                            except Exception as e:
-                                logger.error(f"Event handler failed: {e}")
-                                self.metrics.increment(
-                                    "handler_errors",
-                                    1,
-                                    {"type": event.type.value},
-                                )
-
-                except Exception as e:
-                    logger.error(f"Failed to process event: {e}")
-                    self.metrics.increment("events_failed", 1)
-                    await asyncio.sleep(0.1)
-
-        except asyncio.CancelledError:
-            logger.info("Event listener cancelled")
-            self._running = False
-
+            # Check for message
+            if self.socket.poll(timeout=timeout):
+                # Receive message
+                data = self.socket.recv_string()
+                event_dict = json.loads(data)
+                event = Event.from_dict(event_dict)
+                
+                # Call handlers
+                if event.type in self.handlers:
+                    for handler in self.handlers[event.type]:
+                        try:
+                            handler(event)
+                        except Exception as e:
+                            logger.error(f"Handler failed: {e}")
+                
+                return event
+                
         except Exception as e:
-            logger.error(f"Event listener failed: {e}")
-            self._running = False
-            raise ServiceException(
-                message="Event listener failed",
-                service_name=self.service_name,
-                error_code="LISTENER_FAILED",
-                details={"error": str(e)},
-            )
+            logger.error(f"Failed to poll events: {e}")
+            
+        return None
 
-    async def stop_listening(self) -> None:
-        """Stop listening for events."""
-        self._running = False
-        await self.cleanup()
-
-
-# Create service instances
-publisher_service = PublisherService(Config(), MetricsManager())
-subscriber_service = SubscriberService(Config(), MetricsManager())
-
-__all__ = [
-    "EventService",
-    "PublisherService",
-    "SubscriberService",
-    "publisher_service",
-    "subscriber_service",
-] 
+# Global instances
+publisher = PublisherService()
+subscriber = SubscriberService() 

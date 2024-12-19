@@ -59,62 +59,207 @@ class SearchMetrics:
 class MetricsManager:
     """Advanced metrics and monitoring manager."""
 
+    _instance = None
+    _initialized = False
+
+    def __new__(cls):
+        """Create or return singleton instance."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
         """Initialize metrics manager."""
-        self.metrics_dir = config_instance.metrics_dir
-        self.enable_telemetry = config_instance.enable_telemetry
-        
-        # Create metrics directory
-        self.metrics_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Initialize Prometheus metrics if enabled
-        if self.enable_telemetry and config_instance.metrics_backend == "prometheus":
-            # Search metrics
+        if self._initialized:
+            return
+
+        try:
+            # Initialize metrics
             self.search_latency = Histogram(
                 "search_latency_seconds",
                 "Search request latency in seconds",
-                buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+                ["endpoint"],
             )
-            self.search_errors = Counter(
-                "search_errors_total",
-                "Total number of search errors",
-                ["error_type"],
+
+            self.index_latency = Histogram(
+                "index_latency_seconds",
+                "Index operation latency in seconds",
+                ["operation"],
             )
+
             self.search_requests = Counter(
                 "search_requests_total",
                 "Total number of search requests",
+                ["endpoint", "status"],
             )
-            self.results_returned = Histogram(
-                "search_results_count",
-                "Number of results returned per search",
-                buckets=[0, 1, 5, 10, 20, 50],
+
+            self.index_operations = Counter(
+                "index_operations_total",
+                "Total number of index operations",
+                ["operation", "status"],
             )
-            
-            # Cache metrics
+
             self.cache_hits = Counter(
                 "cache_hits_total",
                 "Total number of cache hits",
-                ["cache_type"],
+                ["cache"],
             )
+
             self.cache_misses = Counter(
                 "cache_misses_total",
                 "Total number of cache misses",
-                ["cache_type"],
+                ["cache"],
             )
-            
-            # Quality metrics
-            self.search_quality = Gauge(
-                "search_quality_score",
-                "Search quality score (0-1)",
+
+            self.model_load_time = Histogram(
+                "model_load_seconds",
+                "Model loading time in seconds",
+                ["model"],
             )
-            self.user_satisfaction = Gauge(
-                "user_satisfaction_score",
-                "User satisfaction score (0-1)",
+
+            self.model_inference_time = Histogram(
+                "model_inference_seconds",
+                "Model inference time in seconds",
+                ["model"],
             )
-            
-            # Start Prometheus server
-            start_http_server(8000)
-            logger.info("Started Prometheus metrics server on port 8000")
+
+            self.vector_store_operations = Counter(
+                "vector_store_operations_total",
+                "Total number of vector store operations",
+                ["operation", "status"],
+            )
+
+            self.vector_store_latency = Histogram(
+                "vector_store_latency_seconds",
+                "Vector store operation latency in seconds",
+                ["operation"],
+            )
+
+            self.api_files = Gauge(
+                "api_files_total",
+                "Total number of API files indexed",
+            )
+
+            self.api_endpoints = Gauge(
+                "api_endpoints_total",
+                "Total number of API endpoints indexed",
+            )
+
+            self.memory_usage = Gauge(
+                "memory_usage_bytes",
+                "Memory usage in bytes",
+            )
+
+            self.cpu_usage = Gauge(
+                "cpu_usage_percent",
+                "CPU usage percentage",
+            )
+
+            # Start metrics server if enabled
+            if config_instance.enable_telemetry:
+                try:
+                    start_http_server(8000)
+                    logger.info("Started Prometheus metrics server on port 8000")
+                except OSError as e:
+                    if e.errno == 98:  # Address already in use
+                        logger.warning("Metrics server port 8000 already in use, continuing without metrics server")
+                    else:
+                        logger.error(f"Failed to start metrics server: {e}")
+
+            self._initialized = True
+
+        except ValueError as e:
+            # Ignore duplicate registration errors
+            if "Duplicated timeseries" not in str(e):
+                raise
+            logger.debug("Metrics already registered")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize metrics: {e}")
+            raise
+
+    def start_timer(self) -> float:
+        """Start a timer.
+        
+        Returns:
+            Start time in seconds
+        """
+        return time.time()
+
+    def stop_timer(
+        self,
+        start_time: float,
+        metric: str,
+        labels: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Stop a timer and record duration.
+        
+        Args:
+            start_time: Start time from start_timer()
+            metric: Metric name
+            labels: Metric labels
+        """
+        duration = time.time() - start_time
+        labels = labels or {}
+
+        if metric == "search":
+            self.search_latency.labels(**labels).observe(duration)
+        elif metric == "index":
+            self.index_latency.labels(**labels).observe(duration)
+        elif metric == "model_load":
+            self.model_load_time.labels(**labels).observe(duration)
+        elif metric == "model_inference":
+            self.model_inference_time.labels(**labels).observe(duration)
+        elif metric == "vector_store":
+            self.vector_store_latency.labels(**labels).observe(duration)
+
+    def increment(
+        self,
+        metric: str,
+        labels: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Increment a counter metric.
+        
+        Args:
+            metric: Metric name
+            labels: Metric labels
+        """
+        labels = labels or {}
+
+        if metric == "search_requests":
+            self.search_requests.labels(**labels).inc()
+        elif metric == "index_operations":
+            self.index_operations.labels(**labels).inc()
+        elif metric == "cache_hits":
+            self.cache_hits.labels(**labels).inc()
+        elif metric == "cache_misses":
+            self.cache_misses.labels(**labels).inc()
+        elif metric == "vector_store_operations":
+            self.vector_store_operations.labels(**labels).inc()
+
+    def set_gauge(
+        self,
+        metric: str,
+        value: float,
+        labels: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Set a gauge metric value.
+        
+        Args:
+            metric: Metric name
+            value: Metric value
+            labels: Metric labels
+        """
+        labels = labels or {}
+
+        if metric == "api_files":
+            self.api_files.set(value)
+        elif metric == "api_endpoints":
+            self.api_endpoints.set(value)
+        elif metric == "memory_usage":
+            self.memory_usage.set(value)
+        elif metric == "cpu_usage":
+            self.cpu_usage.set(value)
 
     def track_search(
         self,
@@ -153,9 +298,9 @@ class MetricsManager:
             self._save_metrics(metrics)
 
             # Update Prometheus metrics if enabled
-            if self.enable_telemetry and config_instance.metrics_backend == "prometheus":
-                self.search_latency.observe(latency)
-                self.search_requests.inc()
+            if config_instance.enable_telemetry:
+                self.search_latency.labels(endpoint=query).observe(latency)
+                self.search_requests.labels(endpoint=query, status="success").inc()
                 self.results_returned.observe(num_results)
                 
                 if error:
@@ -176,11 +321,11 @@ class MetricsManager:
             hit: Whether it was a cache hit
         """
         try:
-            if self.enable_telemetry and config_instance.metrics_backend == "prometheus":
+            if config_instance.enable_telemetry:
                 if hit:
-                    self.cache_hits.labels(cache_type=cache_type).inc()
+                    self.cache_hits.labels(cache=cache_type).inc()
                 else:
-                    self.cache_misses.labels(cache_type=cache_type).inc()
+                    self.cache_misses.labels(cache=cache_type).inc()
 
         except Exception as e:
             logger.error(f"Failed to track cache metrics: {e}")
@@ -201,7 +346,7 @@ class MetricsManager:
                 self._save_metrics(metrics)
 
             # Update Prometheus metrics
-            if self.enable_telemetry and config_instance.metrics_backend == "prometheus":
+            if config_instance.enable_telemetry:
                 self.user_satisfaction.set(feedback)
 
         except Exception as e:

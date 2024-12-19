@@ -1,196 +1,218 @@
-"""Project consistency and health checks."""
+"""Consistency checking for search results."""
 
-import importlib
-import inspect
 import json
-from datetime import datetime
+import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict, List, Optional, Tuple
 
 from ..config import config_instance
 
-
 class Consistency:
-    """Monitors and validates project consistency."""
+    """Consistency checking for search results."""
 
     def __init__(
-        self, cache_file: str = f"{config_instance.health_dir}/consistency.json"
+        self,
+        cache_file: Optional[Path] = None,
+        max_age: int = 86400,  # 24 hours
+        min_confidence: float = 0.8,
     ):
-        """Initialize health checker.
-
+        """Initialize consistency checker.
+        
         Args:
             cache_file: Path to cache file.
+                Defaults to health_dir/consistency.json.
+            max_age: Maximum age of consistency data in seconds.
+                Defaults to 24 hours.
+            min_confidence: Minimum confidence score for consistent results.
+                Defaults to 0.8.
         """
-        self.cache_file = Path(cache_file)
-        self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_file = cache_file or (config_instance.health_dir / "consistency.json")
+        self.max_age = max_age
+        self.min_confidence = min_confidence
+        self._cache: Dict[str, Dict] = {}
+        self._load_cache()
 
-    def check_dependencies(self) -> Dict[str, bool]:
-        """Check if all required dependencies are installed.
-
-        Returns:
-            Dictionary of dependency status.
-        """
-        required = [
-            "pinecone",
-            "sentence_transformers",
-            "numpy",
-            "spacy",
-            "networkx",
-            "fastapi",
-            "uvicorn",
-            "python-dotenv",
-            "pydantic",
-            "openapi-spec-validator",
-            "requests",
-            "tqdm",
-            "scikit-learn",
-        ]
-
-        status = {}
-        for dep in required:
+    def _load_cache(self) -> None:
+        """Load consistency cache from file."""
+        if self.cache_file.exists():
             try:
-                importlib.import_module(dep.replace("-", "_"))
-                status[dep] = True
-            except ImportError:
-                status[dep] = False
+                with open(self.cache_file) as f:
+                    self._cache = json.load(f)
+            except Exception:
+                self._cache = {}
 
-        return status
+    def _save_cache(self) -> None:
+        """Save consistency cache to file."""
+        try:
+            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.cache_file, "w") as f:
+                json.dump(self._cache, f, indent=2)
+        except Exception:
+            pass  # Ignore save errors
 
-    def check_model_files(self) -> Dict[str, bool]:
-        """Check if required model files exist.
-
+    def check_result(
+        self,
+        query: str,
+        result_id: str,
+        score: float,
+        timestamp: Optional[float] = None,
+    ) -> bool:
+        """Check if search result is consistent.
+        
+        Args:
+            query: Search query.
+            result_id: Result identifier.
+            score: Result confidence score.
+            timestamp: Result timestamp.
+                Defaults to current time.
+                
         Returns:
-            Dictionary of model file status.
+            True if result is consistent, False otherwise.
         """
-        import spacy.util
-
-        models = {
-            "en_core_web_sm": spacy.util.is_package("en_core_web_sm"),
-            "sentence_transformer": Path("models/all-MiniLM-L6-v2").exists(),
-        }
-
-        return models
-
-    def check_cache_consistency(self) -> Dict[str, Any]:
-        """Check cache consistency across components.
-
-        Returns:
-            Dictionary of cache status.
-        """
-        cache_paths = [
-            f"{config_instance.cache_dir}/search_history.json",
-            f"{config_instance.metrics_dir}/search_quality.json",
-            f"{config_instance.health_dir}/consistency.json",
-        ]
-
-        status = {}
-        for path in cache_paths:
-            cache_file = Path(path)
-            if cache_file.exists():
-                try:
-                    with open(cache_file, "r") as f:
-                        data = json.load(f)
-                    status[path] = {
-                        "exists": True,
-                        "valid_json": True,
-                        "last_modified": datetime.fromtimestamp(
-                            cache_file.stat().st_mtime
-                        ).isoformat(),
-                    }
-                except json.JSONDecodeError:
-                    status[path] = {"exists": True, "valid_json": False}
-            else:
-                status[path] = {"exists": False}
-
-        return status
-
-    def check_api_consistency(self) -> Dict[str, Any]:
-        """Check API component consistency.
-
-        Returns:
-            Dictionary of API consistency status.
-        """
-        from .embedding.embeddings import TripleVectorizer
-        from .expansion import QueryExpander
-        from .quality import QualityMetrics
-        from .search.boosting import ContextualBooster
-        from .search.searcher import APISearcher
-        from .understanding import ZeroShotUnderstanding
-
-        components = {
-            "APISearcher": APISearcher,
-            "TripleVectorizer": TripleVectorizer,
-            "ContextualBooster": ContextualBooster,
-            "ZeroShotUnderstanding": ZeroShotUnderstanding,
-            "QueryExpander": QueryExpander,
-            "QualityMetrics": QualityMetrics,
-        }
-
-        status = {}
-        for name, component in components.items():
-            methods = inspect.getmembers(component, predicate=inspect.isfunction)
-            status[name] = {
-                "method_count": len(methods),
-                "has_init": hasattr(component, "__init__"),
-                "has_docstring": bool(component.__doc__),
+        timestamp = timestamp or time.time()
+        
+        # Get or create query entry
+        if query not in self._cache:
+            self._cache[query] = {
+                "results": {},
+                "last_update": timestamp
             }
-
-        return status
-
-    def run_full_check(self) -> Dict[str, Any]:
-        """Run all consistency checks.
-
-        Returns:
-            Dictionary with all check results.
-        """
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "dependencies": self.check_dependencies(),
-            "models": self.check_model_files(),
-            "cache": self.check_cache_consistency(),
-            "api": self.check_api_consistency(),
+        
+        # Update result
+        self._cache[query]["results"][result_id] = {
+            "score": score,
+            "timestamp": timestamp
         }
+        
+        # Save cache
+        self._save_cache()
+        
+        # Check consistency
+        return self._check_consistency(query, result_id)
 
-        # Cache results
-        self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.cache_file, "w") as f:
-            json.dump(results, f, indent=2)
-
-        return results
-
-    def get_health_summary(self) -> Dict[str, str]:
-        """Get a summary of project health.
-
+    def _check_consistency(self, query: str, result_id: str) -> bool:
+        """Check consistency of result.
+        
+        Args:
+            query: Search query.
+            result_id: Result identifier.
+            
         Returns:
-            Dictionary with health summary.
+            True if result is consistent, False otherwise.
         """
-        results = self.run_full_check()
+        if query not in self._cache:
+            return True
+            
+        query_data = self._cache[query]
+        results = query_data["results"]
+        
+        if result_id not in results:
+            return True
+            
+        result = results[result_id]
+        
+        # Check age
+        age = time.time() - result["timestamp"]
+        if age > self.max_age:
+            return True
+            
+        # Check confidence
+        return result["score"] >= self.min_confidence
 
-        # Check dependencies
-        deps_ok = all(results["dependencies"].values())
+    def get_inconsistent_results(
+        self,
+        min_occurrences: int = 2,
+    ) -> List[Tuple[str, str, float]]:
+        """Get list of inconsistent results.
+        
+        Args:
+            min_occurrences: Minimum number of occurrences for inconsistency.
+                Defaults to 2.
+                
+        Returns:
+            List of (query, result_id, score) tuples.
+        """
+        inconsistent = []
+        
+        for query, query_data in self._cache.items():
+            results = query_data["results"]
+            
+            # Count occurrences
+            occurrences: Dict[str, int] = {}
+            for result_id in results:
+                if not self._check_consistency(query, result_id):
+                    occurrences[result_id] = occurrences.get(result_id, 0) + 1
+            
+            # Add inconsistent results
+            for result_id, count in occurrences.items():
+                if count >= min_occurrences:
+                    score = results[result_id]["score"]
+                    inconsistent.append((query, result_id, score))
+        
+        return inconsistent
 
-        # Check models
-        models_ok = all(results["models"].values())
+    def clear_old_entries(self) -> None:
+        """Clear entries older than max_age."""
+        now = time.time()
+        
+        for query in list(self._cache.keys()):
+            query_data = self._cache[query]
+            results = query_data["results"]
+            
+            # Remove old results
+            for result_id in list(results.keys()):
+                result = results[result_id]
+                age = now - result["timestamp"]
+                if age > self.max_age:
+                    del results[result_id]
+            
+            # Remove empty queries
+            if not results:
+                del self._cache[query]
+        
+        # Save cache
+        self._save_cache()
 
-        # Check cache
-        cache_ok = all(
-            status.get("valid_json", False)
-            for status in results["cache"].values()
-            if status["exists"]
-        )
-
-        # Check API
-        api_ok = all(
-            status["has_init"] and status["has_docstring"]
-            for status in results["api"].values()
-        )
-
+    def get_stats(self) -> Dict:
+        """Get consistency statistics.
+        
+        Returns:
+            Dictionary with statistics:
+            - total_queries: Total number of queries
+            - total_results: Total number of results
+            - inconsistent_results: Number of inconsistent results
+            - avg_score: Average confidence score
+            - min_score: Minimum confidence score
+            - max_score: Maximum confidence score
+            - avg_age: Average age in seconds
+            - cache_size: Cache size in bytes
+        """
+        total_queries = len(self._cache)
+        total_results = 0
+        inconsistent_results = 0
+        scores = []
+        ages = []
+        
+        now = time.time()
+        
+        for query_data in self._cache.values():
+            results = query_data["results"]
+            total_results += len(results)
+            
+            for result_id, result in results.items():
+                scores.append(result["score"])
+                ages.append(now - result["timestamp"])
+                
+                if not self._check_consistency(query, result_id):
+                    inconsistent_results += 1
+        
         return {
-            "status": "healthy"
-            if all([deps_ok, models_ok, cache_ok, api_ok])
-            else "unhealthy",
-            "dependencies": "ok" if deps_ok else "missing dependencies",
-            "models": "ok" if models_ok else "missing models",
-            "cache": "ok" if cache_ok else "cache inconsistency",
-            "api": "ok" if api_ok else "api inconsistency",
+            "total_queries": total_queries,
+            "total_results": total_results,
+            "inconsistent_results": inconsistent_results,
+            "avg_score": sum(scores) / len(scores) if scores else 0,
+            "min_score": min(scores) if scores else 0,
+            "max_score": max(scores) if scores else 0,
+            "avg_age": sum(ages) / len(ages) if ages else 0,
+            "cache_size": len(json.dumps(self._cache))
         }

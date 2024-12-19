@@ -1,494 +1,160 @@
-"""Configuration validation for application settings."""
+"""Configuration validation using Pydantic models."""
 
-import logging
-from typing import Dict, List, Any, Optional, Set, Type, Union
-from dataclasses import dataclass
-from enum import Enum
+from typing import Dict, List, Optional, Union
+from pydantic import BaseModel, Field, model_validator
+from pathlib import Path
 import re
-import os
 
-from ..monitoring.events import Event, EventType
-from ..monitoring.metrics import MetricsManager
-from .config import Config
+from .base import Environment
 
-logger = logging.getLogger(__name__)
+class PathConfigModel(BaseModel):
+    """Path configuration validation model."""
+    api_dir: Path = Field(..., description="Directory containing API files")
+    cache_dir: Path = Field(..., description="Directory for caching")
+    health_dir: Path = Field(..., description="Directory for health checks")
+    model_dir: Path = Field(..., description="Directory for model files")
+    metrics_dir: Path = Field(..., description="Directory for metrics")
 
+    @model_validator(mode='after')
+    def validate_directories(self) -> 'PathConfigModel':
+        """Validate directory exists or can be created."""
+        for field, value in self:
+            value.mkdir(parents=True, exist_ok=True)
+        return self
 
-class ValidationLevel(Enum):
-    """Validation level for configuration settings."""
+class PineconeConfigModel(BaseModel):
+    """Pinecone configuration validation model."""
+    api_key: str = Field(..., description="Pinecone API key")
+    environment: str = Field(..., description="Pinecone environment")
+    index_name: str = Field(..., description="Pinecone index name")
+    cloud: str = Field(..., description="Cloud provider")
+    region: str = Field(..., description="Cloud region")
+    pool_min_size: int = Field(ge=1, description="Minimum pool size")
+    pool_max_size: int = Field(ge=1, description="Maximum pool size")
+    pool_max_idle_time: int = Field(ge=1, description="Maximum idle time in seconds")
+    pool_cleanup_interval: int = Field(ge=1, description="Cleanup interval in seconds")
 
-    ERROR = "error"  # Required setting, fail if invalid
-    WARNING = "warning"  # Optional setting, warn if invalid
-    INFO = "info"  # Informational validation only
+    @model_validator(mode='after')
+    def validate_pool_size(self) -> 'PineconeConfigModel':
+        """Validate pool size configuration."""
+        if self.pool_min_size > self.pool_max_size:
+            raise ValueError("Minimum pool size must be less than maximum")
+        return self
 
+class ModelConfigModel(BaseModel):
+    """Model configuration validation model."""
+    bi_encoder: str = Field(..., description="Bi-encoder model name")
+    bi_encoder_fallback: str = Field(..., description="Fallback bi-encoder model name")
+    cross_encoder: str = Field(..., description="Cross-encoder model name")
+    multilingual: str = Field(..., description="Multilingual model name")
+    huggingface_token: Optional[str] = Field(None, description="HuggingFace API token")
 
-@dataclass
-class ValidationRule:
-    """Validation rule for configuration setting."""
+    @model_validator(mode='after')
+    def validate_model_names(self) -> 'ModelConfigModel':
+        """Validate model name format."""
+        for field, value in self:
+            if not value or field == "huggingface_token":
+                continue
+            if not re.match(r"^[\w\-/]+$", value):
+                raise ValueError(f"Invalid model name format: {value}")
+        return self
 
-    name: str  # Setting name
-    level: ValidationLevel  # Validation level
-    type: Type  # Expected type
-    required: bool = True  # Whether setting is required
-    default: Any = None  # Default value if not set
-    min_value: Optional[Union[int, float]] = None  # Minimum value
-    max_value: Optional[Union[int, float]] = None  # Maximum value
-    min_length: Optional[int] = None  # Minimum length
-    max_length: Optional[int] = None  # Maximum length
-    pattern: Optional[str] = None  # Regex pattern
-    allowed_values: Optional[List[Any]] = None  # List of allowed values
-    dependencies: Optional[List[str]] = None  # Required dependencies
-    conflicts: Optional[List[str]] = None  # Conflicting settings
-    custom_validator: Optional[callable] = None  # Custom validation function
+class VectorConfigModel(BaseModel):
+    """Vector configuration validation model."""
+    dimension: int = Field(ge=1, description="Vector dimension")
+    metric: str = Field(..., description="Distance metric")
+    batch_size: int = Field(ge=1, description="Batch size")
+    num_threads: int = Field(ge=1, description="Number of threads")
+    quantization_bits: int = Field(ge=1, le=8, description="Quantization bits")
+    use_gpu: bool = Field(description="Whether to use GPU")
 
+class SearchConfigModel(BaseModel):
+    """Search configuration validation model."""
+    max_results: int = Field(ge=1, description="Maximum number of results")
+    min_score: float = Field(ge=0, le=1, description="Minimum similarity score")
+    timeout: int = Field(ge=1, description="Search timeout in seconds")
+    cache_ttl: int = Field(ge=0, description="Cache TTL in seconds")
 
-@dataclass
-class ValidationResult:
-    """Result of configuration validation."""
+class CacheConfigModel(BaseModel):
+    """Cache configuration validation model."""
+    ttl: int = Field(ge=0, description="Cache TTL in seconds")
+    embedding_ttl: int = Field(ge=0, description="Embedding cache TTL in seconds")
+    backend: str = Field(..., description="Cache backend")
 
-    name: str  # Setting name
-    level: ValidationLevel  # Validation level
-    valid: bool  # Whether setting is valid
-    value: Any  # Current value
-    message: str  # Validation message
-    rule: ValidationRule  # Applied rule
+class MonitoringConfigModel(BaseModel):
+    """Monitoring configuration validation model."""
+    enable_telemetry: bool = Field(description="Whether to enable telemetry")
+    metrics_backend: str = Field(..., description="Metrics backend")
+    log_level: str = Field(..., description="Log level")
 
+class ServiceConfigModel(BaseModel):
+    """Service configuration validation model."""
+    name: str = Field(..., description="Service name")
+    version: str = Field(..., description="Service version")
+    environment: Environment = Field(..., description="Service environment")
 
-class ConfigValidator:
-    """Configuration validator implementation."""
+class ConfigModel(BaseModel):
+    """Complete configuration validation model."""
+    paths: PathConfigModel
+    pinecone: PineconeConfigModel
+    models: ModelConfigModel
+    vectors: VectorConfigModel
+    search: SearchConfigModel
+    cache: CacheConfigModel
+    monitoring: MonitoringConfigModel
+    service: ServiceConfigModel
 
-    def __init__(
-        self,
-        config: Config,
-        metrics_manager: Optional[MetricsManager] = None,
-    ) -> None:
-        """Initialize config validator.
+    class Config:
+        """Pydantic model configuration."""
+        arbitrary_types_allowed = True
 
-        Args:
-            config: Application configuration
-            metrics_manager: Optional metrics manager
-        """
-        self.config = config
-        self.metrics = metrics_manager
-        self._rules: Dict[str, ValidationRule] = {}
-        self._results: List[ValidationResult] = []
-        self._initialized = False
+def validate_config(config_dict: Dict) -> Dict:
+    """Validate configuration dictionary.
+    
+    Args:
+        config_dict: Configuration dictionary to validate.
+        
+    Returns:
+        Validated configuration dictionary.
+        
+    Raises:
+        ValueError: If configuration is invalid.
+    """
+    try:
+        model = ConfigModel(**config_dict)
+        return model.dict()
+    except Exception as e:
+        raise ValueError(f"Configuration validation failed: {e}")
 
-        # Register default rules
-        self._register_default_rules()
+def validate_config_file(path: Union[str, Path]) -> Dict:
+    """Validate configuration file.
+    
+    Args:
+        path: Path to configuration file.
+        
+    Returns:
+        Validated configuration dictionary.
+        
+    Raises:
+        ValueError: If configuration is invalid.
+        FileNotFoundError: If file not found.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {path}")
 
-    def _register_default_rules(self) -> None:
-        """Register default validation rules."""
-        # API settings
-        self.add_rule(
-            ValidationRule(
-                name="API_DIR",
-                level=ValidationLevel.ERROR,
-                type=str,
-                required=True,
-                custom_validator=self._validate_directory,
-            )
-        )
+    import yaml
+    import json
 
-        # Cache settings
-        self.add_rule(
-            ValidationRule(
-                name="CACHE_TTL",
-                level=ValidationLevel.WARNING,
-                type=int,
-                required=False,
-                default=3600,
-                min_value=0,
-            )
-        )
+    try:
+        with open(path) as f:
+            if path.suffix == ".yaml":
+                config_dict = yaml.safe_load(f)
+            elif path.suffix == ".json":
+                config_dict = json.load(f)
+            else:
+                raise ValueError("Unsupported file format")
+    except Exception as e:
+        raise ValueError(f"Failed to load configuration file: {e}")
 
-        # Model settings
-        self.add_rule(
-            ValidationRule(
-                name="MODEL_NAME",
-                level=ValidationLevel.ERROR,
-                type=str,
-                required=True,
-                allowed_values=[
-                    "all-MiniLM-L6-v2",
-                    "all-mpnet-base-v2",
-                    "multi-qa-mpnet-base-dot-v1",
-                ],
-            )
-        )
-
-        # Pinecone settings
-        self.add_rule(
-            ValidationRule(
-                name="PINECONE_API_KEY",
-                level=ValidationLevel.ERROR,
-                type=str,
-                required=True,
-                min_length=32,
-            )
-        )
-        self.add_rule(
-            ValidationRule(
-                name="PINECONE_ENV",
-                level=ValidationLevel.ERROR,
-                type=str,
-                required=True,
-            )
-        )
-
-        # ZeroMQ settings
-        self.add_rule(
-            ValidationRule(
-                name="ZMQ_PUB_PORT",
-                level=ValidationLevel.ERROR,
-                type=int,
-                required=True,
-                min_value=1024,
-                max_value=65535,
-            )
-        )
-        self.add_rule(
-            ValidationRule(
-                name="ZMQ_SUB_PORT",
-                level=ValidationLevel.ERROR,
-                type=int,
-                required=True,
-                min_value=1024,
-                max_value=65535,
-                conflicts=["ZMQ_PUB_PORT"],
-            )
-        )
-
-        # Service discovery settings
-        self.add_rule(
-            ValidationRule(
-                name="DISCOVERY_HOST",
-                level=ValidationLevel.WARNING,
-                type=str,
-                required=False,
-                default="localhost",
-            )
-        )
-        self.add_rule(
-            ValidationRule(
-                name="DISCOVERY_PORT",
-                level=ValidationLevel.WARNING,
-                type=int,
-                required=False,
-                default=8500,
-                min_value=1024,
-                max_value=65535,
-            )
-        )
-
-        # Circuit breaker settings
-        self.add_rule(
-            ValidationRule(
-                name="CIRCUIT_FAILURE_THRESHOLD",
-                level=ValidationLevel.WARNING,
-                type=int,
-                required=False,
-                default=5,
-                min_value=1,
-            )
-        )
-        self.add_rule(
-            ValidationRule(
-                name="CIRCUIT_RESET_TIMEOUT",
-                level=ValidationLevel.WARNING,
-                type=int,
-                required=False,
-                default=60,
-                min_value=1,
-            )
-        )
-
-        # Rate limiting settings
-        self.add_rule(
-            ValidationRule(
-                name="RATE_LIMIT_REQUESTS",
-                level=ValidationLevel.WARNING,
-                type=int,
-                required=False,
-                default=100,
-                min_value=1,
-            )
-        )
-        self.add_rule(
-            ValidationRule(
-                name="RATE_LIMIT_WINDOW",
-                level=ValidationLevel.WARNING,
-                type=int,
-                required=False,
-                default=60,
-                min_value=1,
-            )
-        )
-
-    def add_rule(self, rule: ValidationRule) -> None:
-        """Add validation rule.
-
-        Args:
-            rule: Validation rule
-        """
-        self._rules[rule.name] = rule
-
-    def validate(self) -> List[ValidationResult]:
-        """Validate configuration settings.
-
-        Returns:
-            List of validation results
-        """
-        self._results = []
-
-        # Validate each rule
-        for rule in self._rules.values():
-            result = self._validate_rule(rule)
-            self._results.append(result)
-
-            # Update metrics
-            if self.metrics:
-                self.metrics.increment(
-                    "config_validation",
-                    1,
-                    {
-                        "setting": rule.name,
-                        "level": rule.level.value,
-                        "valid": str(result.valid),
-                    },
-                )
-
-        return self._results
-
-    def _validate_rule(self, rule: ValidationRule) -> ValidationResult:
-        """Validate configuration setting.
-
-        Args:
-            rule: Validation rule
-
-        Returns:
-            Validation result
-        """
-        # Get setting value
-        value = os.environ.get(rule.name, rule.default)
-
-        # Check if required
-        if rule.required and value is None:
-            return ValidationResult(
-                name=rule.name,
-                level=rule.level,
-                valid=False,
-                value=value,
-                message=f"Required setting {rule.name} is not set",
-                rule=rule,
-            )
-
-        # Skip validation if not required and not set
-        if not rule.required and value is None:
-            return ValidationResult(
-                name=rule.name,
-                level=rule.level,
-                valid=True,
-                value=value,
-                message=f"Optional setting {rule.name} is not set",
-                rule=rule,
-            )
-
-        # Validate type
-        try:
-            value = rule.type(value)
-        except (ValueError, TypeError):
-            return ValidationResult(
-                name=rule.name,
-                level=rule.level,
-                valid=False,
-                value=value,
-                message=f"Setting {rule.name} must be of type {rule.type.__name__}",
-                rule=rule,
-            )
-
-        # Validate numeric range
-        if isinstance(value, (int, float)):
-            if rule.min_value is not None and value < rule.min_value:
-                return ValidationResult(
-                    name=rule.name,
-                    level=rule.level,
-                    valid=False,
-                    value=value,
-                    message=f"Setting {rule.name} must be >= {rule.min_value}",
-                    rule=rule,
-                )
-            if rule.max_value is not None and value > rule.max_value:
-                return ValidationResult(
-                    name=rule.name,
-                    level=rule.level,
-                    valid=False,
-                    value=value,
-                    message=f"Setting {rule.name} must be <= {rule.max_value}",
-                    rule=rule,
-                )
-
-        # Validate string length
-        if isinstance(value, str):
-            if rule.min_length is not None and len(value) < rule.min_length:
-                return ValidationResult(
-                    name=rule.name,
-                    level=rule.level,
-                    valid=False,
-                    value=value,
-                    message=f"Setting {rule.name} must be at least {rule.min_length} characters",
-                    rule=rule,
-                )
-            if rule.max_length is not None and len(value) > rule.max_length:
-                return ValidationResult(
-                    name=rule.name,
-                    level=rule.level,
-                    valid=False,
-                    value=value,
-                    message=f"Setting {rule.name} must be at most {rule.max_length} characters",
-                    rule=rule,
-                )
-
-        # Validate pattern
-        if rule.pattern is not None and isinstance(value, str):
-            if not re.match(rule.pattern, value):
-                return ValidationResult(
-                    name=rule.name,
-                    level=rule.level,
-                    valid=False,
-                    value=value,
-                    message=f"Setting {rule.name} must match pattern {rule.pattern}",
-                    rule=rule,
-                )
-
-        # Validate allowed values
-        if rule.allowed_values is not None and value not in rule.allowed_values:
-            return ValidationResult(
-                name=rule.name,
-                level=rule.level,
-                valid=False,
-                value=value,
-                message=f"Setting {rule.name} must be one of {rule.allowed_values}",
-                rule=rule,
-            )
-
-        # Validate dependencies
-        if rule.dependencies is not None:
-            for dependency in rule.dependencies:
-                if dependency not in os.environ:
-                    return ValidationResult(
-                        name=rule.name,
-                        level=rule.level,
-                        valid=False,
-                        value=value,
-                        message=f"Setting {rule.name} requires {dependency} to be set",
-                        rule=rule,
-                    )
-
-        # Validate conflicts
-        if rule.conflicts is not None:
-            for conflict in rule.conflicts:
-                if conflict in os.environ:
-                    return ValidationResult(
-                        name=rule.name,
-                        level=rule.level,
-                        valid=False,
-                        value=value,
-                        message=f"Setting {rule.name} conflicts with {conflict}",
-                        rule=rule,
-                    )
-
-        # Run custom validator
-        if rule.custom_validator is not None:
-            try:
-                valid, message = rule.custom_validator(value)
-                if not valid:
-                    return ValidationResult(
-                        name=rule.name,
-                        level=rule.level,
-                        valid=False,
-                        value=value,
-                        message=message,
-                        rule=rule,
-                    )
-            except Exception as e:
-                return ValidationResult(
-                    name=rule.name,
-                    level=rule.level,
-                    valid=False,
-                    value=value,
-                    message=f"Custom validation failed: {e}",
-                    rule=rule,
-                )
-
-        # All validations passed
-        return ValidationResult(
-            name=rule.name,
-            level=rule.level,
-            valid=True,
-            value=value,
-            message=f"Setting {rule.name} is valid",
-            rule=rule,
-        )
-
-    def _validate_directory(self, path: str) -> tuple[bool, str]:
-        """Validate directory path.
-
-        Args:
-            path: Directory path
-
-        Returns:
-            Tuple of (valid, message)
-        """
-        if not os.path.exists(path):
-            return False, f"Directory {path} does not exist"
-        if not os.path.isdir(path):
-            return False, f"Path {path} is not a directory"
-        if not os.access(path, os.R_OK):
-            return False, f"Directory {path} is not readable"
-        return True, f"Directory {path} is valid"
-
-    def get_errors(self) -> List[ValidationResult]:
-        """Get validation errors.
-
-        Returns:
-            List of error results
-        """
-        return [
-            result for result in self._results
-            if not result.valid and result.level == ValidationLevel.ERROR
-        ]
-
-    def get_warnings(self) -> List[ValidationResult]:
-        """Get validation warnings.
-
-        Returns:
-            List of warning results
-        """
-        return [
-            result for result in self._results
-            if not result.valid and result.level == ValidationLevel.WARNING
-        ]
-
-    def get_info(self) -> List[ValidationResult]:
-        """Get validation info.
-
-        Returns:
-            List of info results
-        """
-        return [
-            result for result in self._results
-            if not result.valid and result.level == ValidationLevel.INFO
-        ]
-
-
-# Create validator instance
-config_validator = ConfigValidator(Config(), MetricsManager())
-
-__all__ = [
-    "ValidationLevel",
-    "ValidationRule",
-    "ValidationResult",
-    "ConfigValidator",
-    "config_validator",
-] 
+    return validate_config(config_dict) 

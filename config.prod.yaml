@@ -1,0 +1,55 @@
+# Production configuration
+
+paths:
+  api_dir: /var/lib/plexure/apis
+  cache_dir: /var/cache/plexure
+  health_dir: /var/lib/plexure/health
+  model_dir: /var/lib/plexure/models
+  metrics_dir: /var/lib/plexure/metrics
+
+pinecone:
+  api_key: ${PINECONE_API_KEY}
+  environment: ${PINECONE_ENV}
+  index_name: plexure-api-search
+  cloud: gcp
+  region: us-central1
+  pool_min_size: 5
+  pool_max_size: 20
+  pool_max_idle_time: 300
+  pool_cleanup_interval: 60
+
+models:
+  bi_encoder: sentence-transformers/all-mpnet-base-v2
+  bi_encoder_fallback: sentence-transformers/all-MiniLM-L6-v2
+  cross_encoder: cross-encoder/stsb-roberta-base
+  multilingual: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+  huggingface_token: ${HUGGINGFACE_TOKEN}
+
+vectors:
+  dimension: 384
+  metric: cosine
+  batch_size: 100
+  num_threads: 8
+  quantization_bits: 8
+  use_gpu: true
+
+search:
+  max_results: 10
+  min_score: 0.5
+  timeout: 5
+  cache_ttl: 3600
+
+cache:
+  ttl: 3600
+  embedding_ttl: 86400
+  backend: redis
+
+monitoring:
+  enable_telemetry: true
+  metrics_backend: prometheus
+  log_level: INFO
+
+service:
+  name: plexure-api-search
+  version: 0.1.0
+  environment: production 

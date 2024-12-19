@@ -1,0 +1,55 @@
+# Test configuration
+
+paths:
+  api_dir: ./tests/data/apis
+  cache_dir: ./tests/data/cache
+  health_dir: ./tests/data/health
+  model_dir: ./tests/data/models
+  metrics_dir: ./tests/data/metrics
+
+pinecone:
+  api_key: test_key
+  environment: test
+  index_name: plexure-api-search-test
+  cloud: gcp
+  region: us-central1
+  pool_min_size: 1
+  pool_max_size: 2
+  pool_max_idle_time: 60
+  pool_cleanup_interval: 30
+
+models:
+  bi_encoder: sentence-transformers/all-MiniLM-L6-v2
+  bi_encoder_fallback: sentence-transformers/all-MiniLM-L6-v2
+  cross_encoder: cross-encoder/stsb-roberta-base
+  multilingual: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+  huggingface_token: test_token
+
+vectors:
+  dimension: 384
+  metric: cosine
+  batch_size: 10
+  num_threads: 2
+  quantization_bits: 8
+  use_gpu: false
+
+search:
+  max_results: 10
+  min_score: 0.5
+  timeout: 5
+  cache_ttl: 60
+
+cache:
+  ttl: 60
+  embedding_ttl: 300
+  backend: memory
+
+monitoring:
+  enable_telemetry: false
+  metrics_backend: prometheus
+  log_level: DEBUG
+
+service:
+  name: plexure-api-search
+  version: 0.1.0
+  environment: test 

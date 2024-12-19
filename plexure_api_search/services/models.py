@@ -1,462 +1,180 @@
-"""Model service implementation."""
+"""Model service for managing embeddings and models."""
 
-import hashlib
-import json
 import logging
-from datetime import datetime
+import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Dict, List, Optional, Tuple, Union
 
-import torch
-from dependency_injector.wiring import inject, provider
+import numpy as np
 from sentence_transformers import SentenceTransformer
+from dependency_injector.wiring import inject
+from dependency_injector.providers import Provider
 
-from ..config import Config
-from ..monitoring.events import Event, EventType
+from ..config import config_instance
 from ..monitoring.metrics import MetricsManager
-from .base import BaseService, ServiceException
-from .events import PublisherService
+from .base import BaseService
 
 logger = logging.getLogger(__name__)
 
+class ModelService(BaseService):
+    """Model service for managing embeddings and models."""
 
-class ModelVersion:
-    """Model version information."""
-
-    def __init__(
-        self,
-        model_id: str,
-        version: str,
-        path: str,
-        config: Dict[str, Any],
-        created_at: datetime,
-    ) -> None:
-        """Initialize model version.
-
-        Args:
-            model_id: Model identifier
-            version: Version string
-            path: Model path
-            config: Model configuration
-            created_at: Creation timestamp
-        """
-        self.model_id = model_id
-        self.version = version
-        self.path = path
-        self.config = config
-        self.created_at = created_at
-        self.hash = self._compute_hash()
-
-    def _compute_hash(self) -> str:
-        """Compute version hash.
-
-        Returns:
-            Version hash
-        """
-        content = f"{self.model_id}:{self.version}:{self.path}:{json.dumps(self.config)}"
-        return hashlib.sha256(content.encode()).hexdigest()
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary.
-
-        Returns:
-            Dictionary representation
-        """
-        return {
-            "model_id": self.model_id,
-            "version": self.version,
-            "path": self.path,
-            "config": self.config,
-            "created_at": self.created_at.isoformat(),
-            "hash": self.hash,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ModelVersion":
-        """Create from dictionary.
-
-        Args:
-            data: Dictionary data
-
-        Returns:
-            Model version instance
-        """
-        return cls(
-            model_id=data["model_id"],
-            version=data["version"],
-            path=data["path"],
-            config=data["config"],
-            created_at=datetime.fromisoformat(data["created_at"]),
-        )
-
-
-class ModelService(BaseService[Dict[str, Any]]):
-    """Model service implementation."""
-
-    def __init__(
-        self,
-        config: Config,
-        publisher: PublisherService,
-        metrics_manager: MetricsManager,
-    ) -> None:
-        """Initialize model service.
-
-        Args:
-            config: Application configuration
-            publisher: Event publisher
-            metrics_manager: Metrics manager
-        """
-        super().__init__(config, publisher, metrics_manager)
+    def __init__(self):
+        """Initialize model service."""
+        super().__init__()
         self.models: Dict[str, SentenceTransformer] = {}
-        self.versions: Dict[str, ModelVersion] = {}
-        self.fallbacks: Dict[str, List[str]] = {}
-        self._initialized = False
+        self.metrics = MetricsManager()
+        self.initialized = False
+        self.embedding_dim = config_instance.vectors.dimension
 
-    async def initialize(self) -> None:
-        """Initialize service resources."""
-        if self._initialized:
+    def initialize(self) -> None:
+        """Initialize model service."""
+        if self.initialized:
             return
 
         try:
-            # Load model versions
-            await self._load_versions()
+            # Load models
+            self.models["bi_encoder"] = self._load_model(config_instance.bi_encoder_model)
+            self.models["bi_encoder_fallback"] = self._load_model(config_instance.bi_encoder_fallback)
+            self.models["multilingual"] = self._load_model(config_instance.multilingual_model)
 
-            # Initialize primary models
-            await self._init_primary_models()
-
-            # Initialize fallback models
-            await self._init_fallback_models()
-
-            self._initialized = True
-            self.publisher.publish(
-                Event(
-                    type=EventType.SERVICE_STARTED,
-                    timestamp=datetime.now(),
-                    component="model_service",
-                    description="Model service initialized",
-                    metadata={
-                        "models": list(self.models.keys()),
-                        "versions": {k: v.version for k, v in self.versions.items()},
-                    },
-                )
-            )
+            self.initialized = True
+            logger.info("Model service initialized")
 
         except Exception as e:
             logger.error(f"Failed to initialize model service: {e}")
-            raise ServiceException(
-                message="Failed to initialize model service",
-                service_name="ModelService",
-                error_code="INIT_FAILED",
-                details={"error": str(e)},
-            )
+            raise
 
-    async def cleanup(self) -> None:
-        """Clean up service resources."""
+    def cleanup(self) -> None:
+        """Clean up model service."""
         self.models.clear()
-        self.versions.clear()
-        self.fallbacks.clear()
-        self._initialized = False
-        self.publisher.publish(
-            Event(
-                type=EventType.SERVICE_STOPPED,
-                timestamp=datetime.now(),
-                component="model_service",
-                description="Model service stopped",
-            )
-        )
+        self.initialized = False
+        logger.info("Model service cleaned up")
 
-    async def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> Dict[str, bool]:
         """Check service health.
-
+        
         Returns:
             Health check results
         """
         return {
-            "service": "ModelService",
-            "initialized": self._initialized,
-            "models": list(self.models.keys()),
-            "versions": {k: v.version for k, v in self.versions.items()},
-            "fallbacks": self.fallbacks,
+            "initialized": self.initialized,
+            "models_loaded": len(self.models) > 0,
         }
 
-    async def _load_versions(self) -> None:
-        """Load model versions from disk."""
-        version_file = self.config.model_dir / "versions.json"
-        if version_file.exists():
-            try:
-                data = json.loads(version_file.read_text())
-                self.versions = {
-                    k: ModelVersion.from_dict(v) for k, v in data.items()
-                }
-                logger.info(f"Loaded {len(self.versions)} model versions")
-            except Exception as e:
-                logger.error(f"Failed to load model versions: {e}")
-                self.versions = {}
-
-    async def _save_versions(self) -> None:
-        """Save model versions to disk."""
-        version_file = self.config.model_dir / "versions.json"
-        try:
-            data = {k: v.to_dict() for k, v in self.versions.items()}
-            version_file.write_text(json.dumps(data, indent=2))
-            logger.info(f"Saved {len(self.versions)} model versions")
-        except Exception as e:
-            logger.error(f"Failed to save model versions: {e}")
-
-    async def _init_primary_models(self) -> None:
-        """Initialize primary models."""
-        # Initialize bi-encoder
-        try:
-            model_id = "bi_encoder"
-            model = await self._load_model(
-                self.config.bi_encoder_model,
-                model_id,
-            )
-            self.models[model_id] = model
-            logger.info(f"Initialized primary bi-encoder: {model_id}")
-        except Exception as e:
-            logger.error(f"Failed to initialize primary bi-encoder: {e}")
-            raise
-
-        # Initialize cross-encoder
-        try:
-            model_id = "cross_encoder"
-            model = await self._load_model(
-                self.config.cross_encoder_model,
-                model_id,
-            )
-            self.models[model_id] = model
-            logger.info(f"Initialized cross-encoder: {model_id}")
-        except Exception as e:
-            logger.error(f"Failed to initialize cross-encoder: {e}")
-            raise
-
-    async def _init_fallback_models(self) -> None:
-        """Initialize fallback models."""
-        # Initialize bi-encoder fallback
-        try:
-            model_id = "bi_encoder_fallback"
-            model = await self._load_model(
-                self.config.bi_encoder_fallback,
-                model_id,
-            )
-            self.models[model_id] = model
-            self.fallbacks["bi_encoder"] = ["bi_encoder_fallback"]
-            logger.info(f"Initialized bi-encoder fallback: {model_id}")
-        except Exception as e:
-            logger.error(f"Failed to initialize bi-encoder fallback: {e}")
-
-        # Initialize multilingual model
-        if hasattr(self.config, "multilingual_model"):
-            try:
-                model_id = "multilingual"
-                model = await self._load_model(
-                    self.config.multilingual_model,
-                    model_id,
-                )
-                self.models[model_id] = model
-                self.fallbacks["bi_encoder"].append("multilingual")
-                logger.info(f"Initialized multilingual model: {model_id}")
-            except Exception as e:
-                logger.error(f"Failed to initialize multilingual model: {e}")
-
-    async def _load_model(
+    def encode(
         self,
-        model_path: str,
-        model_id: str,
-    ) -> SentenceTransformer:
-        """Load model from path.
-
+        texts: Union[str, List[str]],
+        model_name: str = "bi_encoder",
+        normalize: bool = True,
+    ) -> np.ndarray:
+        """Encode texts using specified model.
+        
         Args:
-            model_path: Model path
-            model_id: Model identifier
+            texts: Text or list of texts to encode
+            model_name: Name of model to use
+            normalize: Whether to normalize vectors
+            
+        Returns:
+            Text embeddings
+        """
+        if not self.initialized:
+            self.initialize()
 
+        try:
+            # Get model
+            model = self.models.get(model_name)
+            if model is None:
+                logger.warning(f"Model {model_name} not found, using fallback")
+                model = self.models["bi_encoder_fallback"]
+
+            # Convert single text to list
+            if isinstance(texts, str):
+                texts = [texts]
+
+            # Clean and validate texts
+            cleaned_texts = []
+            for text in texts:
+                if not isinstance(text, str):
+                    text = str(text)
+                if not text.strip():
+                    text = "empty"
+                cleaned_texts.append(text)
+
+            # Encode texts
+            start_time = self.metrics.start_timer()
+            embeddings = model.encode(
+                cleaned_texts,
+                normalize_embeddings=normalize,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+            )
+
+            # Ensure correct shape
+            if len(cleaned_texts) == 1:
+                embeddings = np.array([embeddings]) if len(embeddings.shape) == 1 else embeddings
+
+            # Resize if needed
+            if embeddings.shape[1] != self.embedding_dim:
+                logger.warning(f"Resizing embeddings from {embeddings.shape[1]} to {self.embedding_dim}")
+                resized = []
+                for embedding in embeddings:
+                    # Pad or truncate to match target dimension
+                    if embedding.shape[0] > self.embedding_dim:
+                        resized.append(embedding[:self.embedding_dim])
+                    else:
+                        padded = np.zeros(self.embedding_dim)
+                        padded[:embedding.shape[0]] = embedding
+                        resized.append(padded)
+                embeddings = np.array(resized)
+
+            # Ensure float32
+            embeddings = embeddings.astype(np.float32)
+
+            # Normalize if requested
+            if normalize:
+                norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+                norms[norms == 0] = 1
+                embeddings = embeddings / norms
+
+            self.metrics.stop_timer(
+                start_time,
+                "model_encode",
+                {"model": model_name},
+            )
+
+            return embeddings[0] if len(cleaned_texts) == 1 else embeddings
+
+        except Exception as e:
+            logger.error(f"Failed to encode texts: {e}")
+            self.metrics.increment("model_errors", {"model": model_name})
+            raise
+
+    def _load_model(self, model_name: str) -> SentenceTransformer:
+        """Load model from disk or download.
+        
+        Args:
+            model_name: Name of model to load
+            
         Returns:
             Loaded model
         """
         try:
-            self.publisher.publish(
-                Event(
-                    type=EventType.MODEL_LOADING_STARTED,
-                    timestamp=datetime.now(),
-                    component="model_service",
-                    description=f"Loading model: {model_id}",
-                    metadata={"model_id": model_id, "path": model_path},
-                )
-            )
-
             # Load model
-            model = SentenceTransformer(model_path)
-
-            # Verify model
-            test_input = ["test sentence"]
-            embeddings = model.encode(
-                test_input,
-                convert_to_tensor=True,
-                show_progress_bar=False,
-            )
-            if embeddings is None or embeddings.shape[0] != len(test_input):
-                raise ValueError("Model verification failed")
-
-            # Create version
-            version = ModelVersion(
-                model_id=model_id,
-                version=model.__version__,
-                path=model_path,
-                config=model.get_config_dict(),
-                created_at=datetime.now(),
-            )
-            self.versions[model_id] = version
-
-            # Save versions
-            await self._save_versions()
-
-            self.publisher.publish(
-                Event(
-                    type=EventType.MODEL_LOADING_COMPLETED,
-                    timestamp=datetime.now(),
-                    component="model_service",
-                    description=f"Model loaded successfully: {model_id}",
-                    metadata={"model_id": model_id, "version": version.version},
-                )
+            start_time = self.metrics.start_timer()
+            model = SentenceTransformer(model_name)
+            self.metrics.stop_timer(
+                start_time,
+                "model_load",
+                {"model": model_name},
             )
 
             return model
 
         except Exception as e:
-            self.publisher.publish(
-                Event(
-                    type=EventType.MODEL_LOADING_FAILED,
-                    timestamp=datetime.now(),
-                    component="model_service",
-                    description=f"Failed to load model: {model_id}",
-                    error=str(e),
-                    metadata={"model_id": model_id, "path": model_path},
-                )
-            )
-            raise ServiceException(
-                message=f"Failed to load model: {model_id}",
-                service_name="ModelService",
-                error_code="MODEL_LOAD_FAILED",
-                details={"error": str(e), "model_id": model_id},
-            )
+            logger.error(f"Failed to load model {model_name}: {e}")
+            self.metrics.increment("model_errors", {"model": model_name})
+            raise
 
-    async def get_model(
-        self,
-        model_id: str,
-        use_fallback: bool = True,
-    ) -> SentenceTransformer:
-        """Get model by ID.
-
-        Args:
-            model_id: Model identifier
-            use_fallback: Whether to try fallback models
-
-        Returns:
-            Model instance
-        """
-        if not self._initialized:
-            await self.initialize()
-
-        try:
-            # Try primary model
-            if model_id in self.models:
-                return self.models[model_id]
-
-            # Try fallbacks
-            if use_fallback and model_id in self.fallbacks:
-                for fallback_id in self.fallbacks[model_id]:
-                    if fallback_id in self.models:
-                        logger.warning(f"Using fallback model: {fallback_id}")
-                        self.metrics.increment(
-                            "model_fallbacks",
-                            1,
-                            {"model_id": model_id, "fallback_id": fallback_id},
-                        )
-                        return self.models[fallback_id]
-
-            raise ServiceException(
-                message=f"Model not found: {model_id}",
-                service_name="ModelService",
-                error_code="MODEL_NOT_FOUND",
-                details={"model_id": model_id},
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to get model: {e}")
-            self.metrics.increment("model_errors", 1, {"model_id": model_id})
-            raise ServiceException(
-                message=f"Failed to get model: {model_id}",
-                service_name="ModelService",
-                error_code="MODEL_ACCESS_FAILED",
-                details={"error": str(e), "model_id": model_id},
-            )
-
-    async def encode(
-        self,
-        texts: Union[str, List[str]],
-        model_id: str = "bi_encoder",
-        use_fallback: bool = True,
-        **kwargs: Any,
-    ) -> torch.Tensor:
-        """Encode texts using model.
-
-        Args:
-            texts: Input texts
-            model_id: Model identifier
-            use_fallback: Whether to try fallback models
-            **kwargs: Additional encoding arguments
-
-        Returns:
-            Encoded vectors
-        """
-        if not self._initialized:
-            await self.initialize()
-
-        try:
-            # Get model
-            model = await self.get_model(model_id, use_fallback)
-
-            # Encode texts
-            start_time = datetime.now()
-            embeddings = model.encode(
-                texts,
-                convert_to_tensor=True,
-                show_progress_bar=False,
-                **kwargs,
-            )
-
-            # Update metrics
-            duration = (datetime.now() - start_time).total_seconds()
-            self.metrics.observe(
-                "encoding_duration",
-                duration,
-                {"model_id": model_id},
-            )
-            self.metrics.increment(
-                "texts_encoded",
-                len(texts) if isinstance(texts, list) else 1,
-                {"model_id": model_id},
-            )
-
-            return embeddings
-
-        except Exception as e:
-            logger.error(f"Failed to encode texts: {e}")
-            self.metrics.increment(
-                "encoding_errors",
-                1,
-                {"model_id": model_id},
-            )
-            raise ServiceException(
-                message="Failed to encode texts",
-                service_name="ModelService",
-                error_code="ENCODING_FAILED",
-                details={"error": str(e), "model_id": model_id},
-            )
-
-
-# Create service instance
-model_service = ModelService(Config(), PublisherService(Config(), MetricsManager()), MetricsManager())
-
-__all__ = ["ModelService", "ModelVersion", "model_service"] 
+# Global instance
+model_service = ModelService() 

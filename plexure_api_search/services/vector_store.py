@@ -1,342 +1,176 @@
-"""Vector store service implementation."""
+"""Vector store service for managing vectors."""
 
 import logging
-from abc import ABC, abstractmethod
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
-from dependency_injector.wiring import inject, provider
+import faiss
+from dependency_injector.wiring import inject
+from dependency_injector.providers import Provider
 
-from ..config import Config
-from ..monitoring.events import Event, EventType
+from ..config import config_instance
 from ..monitoring.metrics import MetricsManager
-from .base import BaseService, ServiceException
-from .events import PublisherService
+from .base import BaseService
 
 logger = logging.getLogger(__name__)
 
+class VectorStore(BaseService):
+    """Vector store service for managing vectors."""
 
-class VectorStoreTransaction:
-    """Vector store transaction context manager."""
+    def __init__(self):
+        """Initialize vector store."""
+        super().__init__()
+        self.index = None
+        self.metrics = MetricsManager()
+        self.initialized = False
+        self.dimension = config_instance.vectors.dimension
+        self.next_id = 0
+        self.vectors = []
 
-    def __init__(self, store: "BaseVectorStore") -> None:
-        """Initialize transaction.
-
-        Args:
-            store: Vector store instance
-        """
-        self.store = store
-        self.changes: List[Dict[str, Any]] = []
-        self.committed = False
-
-    def __enter__(self) -> "VectorStoreTransaction":
-        """Enter transaction context."""
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Exit transaction context."""
-        if exc_type is None and not self.committed:
-            self.commit()
-        elif exc_type is not None:
-            self.rollback()
-
-    def add(self, operation: Dict[str, Any]) -> None:
-        """Add operation to transaction.
-
-        Args:
-            operation: Operation details
-        """
-        self.changes.append(operation)
-
-    def commit(self) -> None:
-        """Commit transaction changes."""
-        if not self.committed:
-            self.store._commit_transaction(self)
-            self.committed = True
-
-    def rollback(self) -> None:
-        """Rollback transaction changes."""
-        if not self.committed:
-            self.store._rollback_transaction(self)
-            self.changes = []
-
-
-class BaseVectorStore(ABC):
-    """Base vector store interface."""
-
-    @abstractmethod
-    def begin_transaction(self) -> VectorStoreTransaction:
-        """Begin a new transaction.
-
-        Returns:
-            Transaction context manager
-        """
-        pass
-
-    @abstractmethod
-    def upsert(
-        self,
-        vectors: List[np.ndarray],
-        metadata: List[Dict[str, Any]],
-        ids: Optional[List[str]] = None,
-    ) -> None:
-        """Upsert vectors to store.
-
-        Args:
-            vectors: Vector data
-            metadata: Vector metadata
-            ids: Optional vector IDs
-        """
-        pass
-
-    @abstractmethod
-    def search(
-        self,
-        query_vector: np.ndarray,
-        top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Search for similar vectors.
-
-        Args:
-            query_vector: Query vector
-            top_k: Number of results
-            filters: Optional filters
-
-        Returns:
-            Search results
-        """
-        pass
-
-    @abstractmethod
-    def delete(self, ids: List[str]) -> None:
-        """Delete vectors by ID.
-
-        Args:
-            ids: Vector IDs to delete
-        """
-        pass
-
-    @abstractmethod
-    def _commit_transaction(self, transaction: VectorStoreTransaction) -> None:
-        """Commit transaction changes.
-
-        Args:
-            transaction: Transaction to commit
-        """
-        pass
-
-    @abstractmethod
-    def _rollback_transaction(self, transaction: VectorStoreTransaction) -> None:
-        """Rollback transaction changes.
-
-        Args:
-            transaction: Transaction to rollback
-        """
-        pass
-
-
-class VectorStoreService(BaseService[Dict[str, Any]]):
-    """Vector store service implementation."""
-
-    def __init__(
-        self,
-        config: Config,
-        publisher: PublisherService,
-        metrics_manager: MetricsManager,
-        store: BaseVectorStore,
-    ) -> None:
-        """Initialize vector store service.
-
-        Args:
-            config: Application configuration
-            publisher: Event publisher
-            metrics_manager: Metrics manager
-            store: Vector store implementation
-        """
-        super().__init__(config, publisher, metrics_manager)
-        self.store = store
-        self._initialized = False
-
-    async def initialize(self) -> None:
-        """Initialize service resources."""
-        if self._initialized:
+    def initialize(self) -> None:
+        """Initialize vector store."""
+        if self.initialized:
             return
 
         try:
-            # Initialize store
-            self._initialized = True
-            self.publisher.publish(
-                Event(
-                    type=EventType.SERVICE_STARTED,
-                    timestamp=datetime.now(),
-                    component="vector_store",
-                    description="Vector store service initialized",
-                )
-            )
+            # Create empty list for vectors
+            self.vectors = []
+            
+            self.initialized = True
+            logger.info("Vector store initialized")
 
         except Exception as e:
             logger.error(f"Failed to initialize vector store: {e}")
-            raise ServiceException(
-                message="Failed to initialize vector store",
-                service_name="VectorStore",
-                error_code="INIT_FAILED",
-                details={"error": str(e)},
-            )
+            raise
 
-    async def cleanup(self) -> None:
-        """Clean up service resources."""
-        self._initialized = False
-        self.publisher.publish(
-            Event(
-                type=EventType.SERVICE_STOPPED,
-                timestamp=datetime.now(),
-                component="vector_store",
-                description="Vector store service stopped",
-            )
-        )
+    def cleanup(self) -> None:
+        """Clean up vector store."""
+        self.vectors = []
+        self.initialized = False
+        logger.info("Vector store cleaned up")
 
-    async def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> Dict[str, bool]:
         """Check service health.
-
+        
         Returns:
             Health check results
         """
         return {
-            "service": "VectorStore",
-            "initialized": self._initialized,
-            "store_type": self.store.__class__.__name__,
+            "initialized": self.initialized,
+            "vectors_ready": len(self.vectors) > 0,
         }
 
-    def begin_transaction(self) -> VectorStoreTransaction:
-        """Begin a new transaction.
-
-        Returns:
-            Transaction context manager
-        """
-        return self.store.begin_transaction()
-
-    async def upsert(
+    def store_vectors(
         self,
-        vectors: List[np.ndarray],
-        metadata: List[Dict[str, Any]],
-        ids: Optional[List[str]] = None,
+        vectors: Union[np.ndarray, List[np.ndarray]],
+        ids: Optional[List[int]] = None,
     ) -> None:
-        """Upsert vectors to store.
-
+        """Store vectors in index.
+        
         Args:
-            vectors: Vector data
-            metadata: Vector metadata
+            vectors: Vectors to store
             ids: Optional vector IDs
         """
-        if not self._initialized:
-            await self.initialize()
+        if not self.initialized:
+            self.initialize()
 
         try:
-            with self.store.begin_transaction() as transaction:
-                self.store.upsert(vectors, metadata, ids)
-                self.metrics.increment(
-                    "vectors_upserted",
-                    len(vectors),
+            # Convert to numpy array if needed
+            if isinstance(vectors, list):
+                vectors = np.array(vectors)
+
+            # Ensure 2D array
+            if len(vectors.shape) == 1:
+                vectors = np.array([vectors])
+
+            # Convert to float32
+            vectors = vectors.astype(np.float32)
+
+            # Log vector info
+            logger.debug(f"Input vector shape: {vectors.shape}")
+            logger.debug(f"Input vector type: {vectors.dtype}")
+            logger.debug(f"Input vector sample: {vectors[0][:5]}")
+            logger.debug(f"Input vector min: {np.min(vectors)}")
+            logger.debug(f"Input vector max: {np.max(vectors)}")
+            logger.debug(f"Input vector mean: {np.mean(vectors)}")
+
+            # Validate dimensions
+            if vectors.shape[1] != self.dimension:
+                raise ValueError(
+                    f"Vector dimension mismatch: {vectors.shape[1]} != {self.dimension}"
                 )
-                self.publisher.publish(
-                    Event(
-                        type=EventType.VECTORS_UPSERTED,
-                        timestamp=datetime.now(),
-                        component="vector_store",
-                        description=f"Upserted {len(vectors)} vectors",
-                        metadata={"count": len(vectors)},
-                    )
-                )
+
+            # Normalize vectors
+            faiss.normalize_L2(vectors)
+
+            # Add vectors
+            start_time = self.metrics.start_timer()
+            self.index.add(vectors)
+
+            # Log index info
+            logger.debug(f"Index size after add: {self.index.ntotal}")
+
+            self.metrics.stop_timer(start_time, "vector_store")
+            self.metrics.increment(
+                "vectors_stored",
+                {"count": len(vectors)},
+            )
 
         except Exception as e:
-            logger.error(f"Failed to upsert vectors: {e}")
-            self.metrics.increment("vector_errors", 1)
-            raise ServiceException(
-                message="Failed to upsert vectors",
-                service_name="VectorStore",
-                error_code="UPSERT_FAILED",
-                details={"error": str(e)},
-            )
+            logger.error(f"Failed to store vectors: {e}")
+            self.metrics.increment("vector_store_errors")
+            raise
 
-    async def search(
+    def search_vectors(
         self,
-        query_vector: np.ndarray,
-        top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        query_vector: Union[np.ndarray, List[float]],
+        k: int = 10,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Search for similar vectors.
-
+        
         Args:
             query_vector: Query vector
-            top_k: Number of results
-            filters: Optional filters
-
+            k: Number of results
+            
         Returns:
-            Search results
+            Distances and indices of similar vectors
         """
-        if not self._initialized:
-            await self.initialize()
+        if not self.initialized:
+            self.initialize()
 
         try:
-            results = self.store.search(query_vector, top_k, filters)
-            self.metrics.increment("searches_performed", 1)
-            self.metrics.observe(
-                "search_results",
-                len(results),
-            )
-            return results
+            # Convert to numpy array if needed
+            if isinstance(query_vector, list):
+                query_vector = np.array(query_vector)
+
+            # Ensure 2D array
+            if len(query_vector.shape) == 1:
+                query_vector = np.array([query_vector])
+
+            # Convert to float32
+            query_vector = query_vector.astype(np.float32)
+
+            # Log query vector shape
+            logger.debug(f"Query vector shape: {query_vector.shape}")
+
+            # Validate dimensions
+            if query_vector.shape[1] != self.dimension:
+                raise ValueError(
+                    f"Vector dimension mismatch: {query_vector.shape[1]} != {self.dimension}"
+                )
+
+            # Search
+            start_time = self.metrics.start_timer()
+            distances, indices = self.index.search(query_vector, k)
+            self.metrics.stop_timer(start_time, "vector_search")
+
+            return distances[0], indices[0]
 
         except Exception as e:
             logger.error(f"Failed to search vectors: {e}")
-            self.metrics.increment("search_errors", 1)
-            raise ServiceException(
-                message="Failed to search vectors",
-                service_name="VectorStore",
-                error_code="SEARCH_FAILED",
-                details={"error": str(e)},
-            )
+            self.metrics.increment("vector_search_errors")
+            raise
 
-    async def delete(self, ids: List[str]) -> None:
-        """Delete vectors by ID.
-
-        Args:
-            ids: Vector IDs to delete
-        """
-        if not self._initialized:
-            await self.initialize()
-
-        try:
-            with self.store.begin_transaction() as transaction:
-                self.store.delete(ids)
-                self.metrics.increment(
-                    "vectors_deleted",
-                    len(ids),
-                )
-                self.publisher.publish(
-                    Event(
-                        type=EventType.VECTORS_DELETED,
-                        timestamp=datetime.now(),
-                        component="vector_store",
-                        description=f"Deleted {len(ids)} vectors",
-                        metadata={"count": len(ids)},
-                    )
-                )
-
-        except Exception as e:
-            logger.error(f"Failed to delete vectors: {e}")
-            self.metrics.increment("vector_errors", 1)
-            raise ServiceException(
-                message="Failed to delete vectors",
-                service_name="VectorStore",
-                error_code="DELETE_FAILED",
-                details={"error": str(e)},
-            )
-
-
-__all__ = [
-    "BaseVectorStore",
-    "VectorStoreService",
-    "VectorStoreTransaction",
-] 
+# Global instance
+vector_store = VectorStore() 

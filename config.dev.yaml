@@ -1,0 +1,55 @@
+# Development configuration
+
+paths:
+  api_dir: ./assets/apis
+  cache_dir: ./.cache
+  health_dir: ./.health
+  model_dir: ./.models
+  metrics_dir: ./.metrics
+
+pinecone:
+  api_key: ${PINECONE_API_KEY}
+  environment: gcp-starter
+  index_name: plexure-api-search-dev
+  cloud: gcp
+  region: us-central1
+  pool_min_size: 2
+  pool_max_size: 5
+  pool_max_idle_time: 300
+  pool_cleanup_interval: 60
+
+models:
+  bi_encoder: sentence-transformers/all-mpnet-base-v2
+  bi_encoder_fallback: sentence-transformers/all-MiniLM-L6-v2
+  cross_encoder: cross-encoder/stsb-roberta-base
+  multilingual: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+  huggingface_token: ${HUGGINGFACE_TOKEN}
+
+vectors:
+  dimension: 384
+  metric: cosine
+  batch_size: 32
+  num_threads: 4
+  quantization_bits: 8
+  use_gpu: false
+
+search:
+  max_results: 10
+  min_score: 0.5
+  timeout: 10
+  cache_ttl: 3600
+
+cache:
+  ttl: 3600
+  embedding_ttl: 86400
+  backend: disk
+
+monitoring:
+  enable_telemetry: true
+  metrics_backend: prometheus
+  log_level: DEBUG
+
+service:
+  name: plexure-api-search
+  version: 0.1.0
+  environment: development 

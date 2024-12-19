@@ -1,180 +1,162 @@
-"""Centralized Pinecone client for vector operations."""
+"""Pinecone client for vector storage."""
 
 import logging
-import time
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Union
 
-from pinecone import Pinecone
+import numpy as np
+import pinecone
 
 from ..config import config_instance
 
 logger = logging.getLogger(__name__)
 
-
 class PineconeClient:
-    """Centralized client for Pinecone operations."""
+    """Pinecone client for vector storage."""
 
     def __init__(self):
         """Initialize Pinecone client."""
+        self.initialized = False
+        self.index = None
 
-        self.index_name = config_instance.pinecone_index_name
-        self.dimension = config_instance.vector_dimension
-        self.cloud = config_instance.pinecone_cloud
-        self.region = config_instance.pinecone_region
+    def initialize(self) -> None:
+        """Initialize Pinecone client."""
+        if self.initialized:
+            return
 
-        # Initialize Pinecone
         try:
-            pc = Pinecone(
-                api_key=config_instance.pinecone_api_key,
-                environment=config_instance.pinecone_environment
+            # Initialize Pinecone
+            pinecone.init(
+                api_key=config_instance.pinecone.api_key,
+                environment=config_instance.pinecone.environment,
             )
 
-            # Check if index exists
-            existing_indexes = [index.name for index in pc.list_indexes()]
-
-            if self.index_name not in existing_indexes:
-                logger.info(f"Creating new index: {self.index_name}")
-                pc.create_index(
-                    name=self.index_name,
-                    dimension=self.dimension,
-                    metric="cosine",  # Use cosine similarity by default
-                    pod_type="starter"  # Use starter pod for testing
+            # Get or create index
+            if config_instance.pinecone.index_name not in pinecone.list_indexes():
+                pinecone.create_index(
+                    name=config_instance.pinecone.index_name,
+                    dimension=config_instance.vectors.dimension,
+                    metric=config_instance.vectors.metric,
                 )
-                time.sleep(2)  # Wait for index creation
 
-            # Get index instance
-            self.index = pc.Index(self.index_name)
-
-            # Verify connection and get stats
-            self._verify_connection()
+            # Connect to index
+            self.index = pinecone.Index(config_instance.pinecone.index_name)
+            self.initialized = True
+            logger.info("Pinecone client initialized")
 
         except Exception as e:
-            logger.error(f"Failed to initialize Pinecone: {str(e)}")
-            raise RuntimeError(f"Failed to initialize Pinecone: {str(e)}")
+            logger.error(f"Failed to initialize Pinecone client: {e}")
+            raise
 
-    def _verify_connection(self) -> Dict:
-        """Verify connection and get index stats."""
-        try:
-            stats = self.index.describe_index_stats()
-            logger.debug("Index stats:")
-            logger.debug(f"Total vectors: {stats.get('total_vector_count', 0)}")
-            logger.debug(f"Dimension: {stats.get('dimension', self.dimension)}")
-            return stats
-        except Exception as e:
-            logger.error(f"Could not get index stats: {e}")
-            return {}
+    def cleanup(self) -> None:
+        """Clean up Pinecone client."""
+        if self.index:
+            self.index = None
+        self.initialized = False
+        logger.info("Pinecone client cleaned up")
 
-    def upsert_vectors(self, vectors: List[Dict], batch_size: int = 10) -> int:
-        """Upsert vectors in batches.
-
-        Args:
-            vectors: List of vector entries to upsert
-            batch_size: Size of batches for upserting
-
-        Returns:
-            Number of vectors successfully upserted
-        """
-        total_upserted = 0
-        current_batch = []
-
-        for vector in vectors:
-            current_batch.append(vector)
-
-            if len(current_batch) >= batch_size:
-                try:
-                    self.index.upsert(vectors=current_batch)
-                    total_upserted += len(current_batch)
-                    logger.info(
-                        f"Upserted batch of {len(current_batch)} vectors. Total: {total_upserted}"
-                    )
-                except Exception as e:
-                    logger.error(f"Batch upsert failed: {e}")
-                    # Try one by one
-                    for v in current_batch:
-                        try:
-                            self.index.upsert(vectors=[v])
-                            total_upserted += 1
-                        except Exception as e:
-                            logger.error(f"Single vector upsert failed: {e}")
-                current_batch = []
-
-        # Upsert remaining vectors
-        if current_batch:
-            try:
-                self.index.upsert(vectors=current_batch)
-                total_upserted += len(current_batch)
-                logger.info(
-                    f"Upserted final batch of {len(current_batch)} vectors. Total: {total_upserted}"
-                )
-            except Exception as e:
-                logger.error(f"Final batch upsert failed: {e}")
-                # Try one by one
-                for v in current_batch:
-                    try:
-                        self.index.upsert(vectors=[v])
-                        total_upserted += 1
-                    except Exception as e:
-                        logger.error(f"Single vector upsert failed: {e}")
-
-        return total_upserted
-
-    def search_vectors(
+    def upsert(
         self,
-        query_vector: List[float],
-        top_k: int = 10,
-        filters: Optional[Dict] = None,
-        include_metadata: bool = True,
-    ) -> Dict[str, Any]:
-        """Search for similar vectors.
+        vectors: List[np.ndarray],
+        metadata: List[Dict],
+        namespace: Optional[str] = None,
+    ) -> None:
+        """Upsert vectors to Pinecone.
+        
+        Args:
+            vectors: List of vectors to upsert
+            metadata: List of metadata for each vector
+            namespace: Optional namespace
+        """
+        if not self.initialized:
+            self.initialize()
 
+        try:
+            # Convert vectors to list
+            vectors_list = [v.tolist() for v in vectors]
+
+            # Create vector IDs
+            ids = [str(i) for i in range(len(vectors))]
+
+            # Upsert vectors
+            self.index.upsert(
+                vectors=list(zip(ids, vectors_list, metadata)),
+                namespace=namespace,
+            )
+            logger.debug(f"Upserted {len(vectors)} vectors")
+
+        except Exception as e:
+            logger.error(f"Failed to upsert vectors: {e}")
+            raise
+
+    def search(
+        self,
+        query_vector: np.ndarray,
+        top_k: int = 10,
+        namespace: Optional[str] = None,
+    ) -> List[Tuple[str, float, Dict]]:
+        """Search for similar vectors in Pinecone.
+        
         Args:
             query_vector: Query vector
             top_k: Number of results to return
-            filters: Optional filters to apply
-            include_metadata: Whether to include metadata
-
+            namespace: Optional namespace
+            
         Returns:
-            Search results from Pinecone
+            List of (id, score, metadata) tuples
         """
+        if not self.initialized:
+            self.initialize()
+
         try:
+            # Convert vector to list
+            vector_list = query_vector.tolist()
+
+            # Search index
             results = self.index.query(
-                vector=query_vector,
+                vector=vector_list,
                 top_k=top_k,
-                include_metadata=include_metadata,
-                filter=filters,
+                namespace=namespace,
+                include_metadata=True,
             )
-            return results
+
+            # Extract matches
+            matches = []
+            for match in results.matches:
+                matches.append(
+                    (match.id, match.score, match.metadata)
+                )
+
+            return matches
+
         except Exception as e:
-            logger.error(f"Search failed: {e}")
+            logger.error(f"Failed to search vectors: {e}")
             raise
 
-    def delete_all(self) -> bool:
-        """Delete all vectors from the index.
-
-        Returns:
-            True if successful, False otherwise
+    def delete(
+        self,
+        ids: Optional[List[str]] = None,
+        namespace: Optional[str] = None,
+    ) -> None:
+        """Delete vectors from Pinecone.
+        
+        Args:
+            ids: List of vector IDs to delete
+            namespace: Optional namespace
         """
+        if not self.initialized:
+            self.initialize()
+
         try:
-            self.index.delete(delete_all=True)
-            time.sleep(2)  # Wait for deletion
-            stats = self._verify_connection()
-            return stats.get("total_vector_count", 0) == 0
+            # Delete vectors
+            self.index.delete(
+                ids=ids,
+                namespace=namespace,
+            )
+            logger.debug(f"Deleted {len(ids) if ids else 'all'} vectors")
+
         except Exception as e:
-            logger.error(f"Failed to delete all vectors: {e}")
-            return False
+            logger.error(f"Failed to delete vectors: {e}")
+            raise
 
-    def get_vector_count(self) -> int:
-        """Get total number of vectors in the index.
-
-        Returns:
-            Total vector count
-        """
-        try:
-            stats = self._verify_connection()
-            return stats.get("total_vector_count", 0)
-        except Exception as e:
-            logger.error(f"Failed to get vector count: {e}")
-            return 0
-
-
+# Global instance
 pinecone_instance = PineconeClient()

@@ -1,53 +1,75 @@
-"""Base service class."""
+"""Base service class for all services."""
 
-from abc import ABC, abstractmethod
+import logging
 from typing import Any, Dict, Generic, Optional, TypeVar
 
-from ..config import Config
-from ..monitoring.events import Publisher
+from ..config import config_instance
 from ..monitoring.metrics import MetricsManager
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 
-class BaseService(Generic[T], ABC):
-    """Base service class with common functionality."""
+class ServiceException(Exception):
+    """Base service exception."""
 
     def __init__(
         self,
-        config: Config,
-        publisher: Publisher,
-        metrics_manager: MetricsManager,
+        message: str,
+        service_name: str,
+        error_code: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Initialize service exception.
+
+        Args:
+            message: Error message
+            service_name: Service name
+            error_code: Error code
+            details: Additional error details
+        """
+        super().__init__(message)
+        self.service_name = service_name
+        self.error_code = error_code
+        self.details = details or {}
+
+
+class BaseService(Generic[T]):
+    """Base service class."""
+
+    def __init__(
+        self,
+        config: Optional[Any] = None,
+        publisher: Optional[Any] = None,
+        metrics_manager: Optional[MetricsManager] = None,
     ) -> None:
         """Initialize base service.
 
         Args:
-            config: Application configuration
+            config: Configuration instance
             publisher: Event publisher
             metrics_manager: Metrics manager
         """
-        self.config = config
+        self.config = config or config_instance
         self.publisher = publisher
-        self.metrics = metrics_manager
+        self.metrics = metrics_manager or MetricsManager()
 
-    @abstractmethod
-    async def initialize(self) -> None:
+    def initialize(self) -> None:
         """Initialize service resources."""
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
-    async def cleanup(self) -> None:
+    def cleanup(self) -> None:
         """Clean up service resources."""
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
-    async def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> Dict[str, Any]:
         """Check service health.
 
         Returns:
             Health check results
         """
-        pass
+        raise NotImplementedError
 
     async def start(self) -> None:
         """Start the service."""
@@ -68,30 +90,6 @@ class BaseService(Generic[T], ABC):
             "initialized": True,
             "config": self.config.__dict__,
         }
-
-
-class ServiceException(Exception):
-    """Base exception for service errors."""
-
-    def __init__(
-        self,
-        message: str,
-        service_name: str,
-        error_code: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Initialize service exception.
-
-        Args:
-            message: Error message
-            service_name: Name of the service that raised the exception
-            error_code: Optional error code
-            details: Optional error details
-        """
-        super().__init__(message)
-        self.service_name = service_name
-        self.error_code = error_code
-        self.details = details or {}
 
 
 class ServiceValidationError(ServiceException):
