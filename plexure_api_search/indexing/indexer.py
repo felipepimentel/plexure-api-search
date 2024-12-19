@@ -97,63 +97,34 @@ class APIIndexer:
                         else:
                             continue
 
+                    logger.debug(f"Processing file: {file_path}")
+                    logger.debug(f"Spec data keys: {list(spec_data.keys())}")
+
                     # Extract endpoints
                     endpoints = []
                     paths = spec_data.get("paths", {})
                     
-                    # Get global parameters if any
-                    global_parameters = spec_data.get("parameters", {})
+                    logger.debug(f"Found {len(paths)} paths in {file_path}")
                     
                     for path, path_data in paths.items():
                         if not isinstance(path_data, dict):
+                            logger.warning(f"Invalid path data for {path}: {path_data}")
                             continue
                             
-                        # Get path-level parameters
-                        path_parameters = path_data.get("parameters", [])
+                        logger.debug(f"Processing path: {path}")
+                        logger.debug(f"Path data keys: {list(path_data.keys())}")
                         
                         for method, endpoint_data in path_data.items():
                             if method == "parameters" or not isinstance(endpoint_data, dict):
                                 continue
 
+                            logger.debug(f"Processing method: {method}")
+                            logger.debug(f"Endpoint data keys: {list(endpoint_data.keys())}")
+
                             # Extract endpoint information
                             description = endpoint_data.get("description", "")
                             if not description:
                                 description = endpoint_data.get("summary", "")
-
-                            # Combine parameters from different levels
-                            parameters = []
-                            
-                            # Add global parameters
-                            for param_name, param_data in global_parameters.items():
-                                if isinstance(param_data, dict):
-                                    param = {
-                                        "name": param_name,
-                                        "type": param_data.get("type", param_data.get("schema", {}).get("type", "")),
-                                        "description": param_data.get("description", ""),
-                                        "required": param_data.get("required", False),
-                                        "in": param_data.get("in", "")
-                                    }
-                                    parameters.append(param)
-                            
-                            # Add path parameters
-                            for param in path_parameters:
-                                if isinstance(param, dict):
-                                    param_copy = param.copy()
-                                    if "schema" in param_copy:
-                                        schema = param_copy.pop("schema")
-                                        if isinstance(schema, dict):
-                                            param_copy["type"] = schema.get("type", "")
-                                    parameters.append(param_copy)
-                            
-                            # Add operation parameters
-                            for param in endpoint_data.get("parameters", []):
-                                if isinstance(param, dict):
-                                    param_copy = param.copy()
-                                    if "schema" in param_copy:
-                                        schema = param_copy.pop("schema")
-                                        if isinstance(schema, dict):
-                                            param_copy["type"] = schema.get("type", "")
-                                    parameters.append(param_copy)
 
                             # Create endpoint metadata with consistent structure
                             endpoint = {
@@ -161,24 +132,33 @@ class APIIndexer:
                                 "method": method.upper(),
                                 "description": description,
                                 "tags": endpoint_data.get("tags", []),
-                                "parameters": parameters,
+                                "parameters": [],  # We'll handle parameters later
                                 "responses": endpoint_data.get("responses", {}),
                                 "operationId": endpoint_data.get("operationId", ""),
                                 "summary": endpoint_data.get("summary", ""),
                                 "security": endpoint_data.get("security", [])
                             }
                             endpoints.append(endpoint)
+                            logger.debug(f"Added endpoint: {method.upper()} {path}")
 
                     # Index endpoints
                     if endpoints:
                         logger.debug(f"Indexing {len(endpoints)} endpoints from {file_path}")
-                        self.index_endpoints(endpoints)
-                        total_endpoints += len(endpoints)
-                        indexed_apis.append({
-                            "path": file_path,
-                            "endpoints": len(endpoints),
-                        })
+                        try:
+                            self.index_endpoints(endpoints)
+                            total_endpoints += len(endpoints)
+                            indexed_apis.append({
+                                "path": file_path,
+                                "endpoints": len(endpoints),
+                            })
+                        except Exception as e:
+                            logger.error(f"Failed to index endpoints from {file_path}: {e}")
+                            failed_files.append({
+                                "path": file_path,
+                                "error": str(e),
+                            })
                     else:
+                        logger.warning(f"No valid endpoints found in {file_path}")
                         failed_files.append({
                             "path": file_path,
                             "error": "No valid endpoints found",
@@ -219,22 +199,50 @@ class APIIndexer:
             # Start timer
             start_time = self.metrics.start_timer()
 
-            # Create text list
+            # Skip if no endpoints
+            if not endpoints:
+                logger.warning("No endpoints to index")
+                return
+
+            # Log endpoint info
+            logger.debug(f"Processing {len(endpoints)} endpoints")
+            for endpoint in endpoints:
+                logger.debug(f"Endpoint: {endpoint['method']} {endpoint['path']}")
+
+            # Create text list and IDs
             texts = []
+            ids = []
             for endpoint in endpoints:
                 text = f"{endpoint['method']} {endpoint['path']} {endpoint.get('summary', '')} {endpoint.get('description', '')}"
                 texts.append(text)
+                ids.append(self.next_id)
+                self.next_id += 1
                 logger.debug(f"Added text: {text}")
+                logger.debug(f"Added ID: {ids[-1]}")
+
+            # Log texts and IDs
+            logger.debug(f"Number of texts: {len(texts)}")
+            logger.debug(f"Number of IDs: {len(ids)}")
+            logger.debug(f"Sample text: {texts[0] if texts else 'No texts'}")
+            logger.debug(f"Sample ID: {ids[0] if ids else 'No IDs'}")
+            logger.debug(f"ID range: {min(ids) if ids else 'N/A'} to {max(ids) if ids else 'N/A'}")
 
             # Generate embeddings in batch
             embeddings = model_service.encode(texts)
             logger.debug(f"Generated embeddings shape: {embeddings.shape}")
             logger.debug(f"Generated embeddings type: {embeddings.dtype}")
-            logger.debug(f"Generated embeddings sample: {embeddings[0][:5]}")
+            logger.debug(f"Generated embeddings sample: {embeddings[0][:5] if len(embeddings) > 0 else 'No embeddings'}")
 
             # Store vectors
             if len(embeddings) > 0:
-                vector_store.store_vectors(embeddings)
+                logger.debug(f"Storing {len(embeddings)} vectors with {len(ids)} IDs")
+                # Convert IDs to numpy array
+                ids_array = np.array(ids, dtype=np.int64)
+                # Ensure contiguous arrays
+                embeddings = np.ascontiguousarray(embeddings)
+                ids_array = np.ascontiguousarray(ids_array)
+                # Store vectors
+                vector_store.store_vectors(embeddings, ids_array)
 
             # Stop timer
             self.metrics.stop_timer(start_time, "indexing")

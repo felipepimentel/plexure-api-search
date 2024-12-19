@@ -101,32 +101,39 @@ class ModelService(BaseService):
                     text = "empty"
                 cleaned_texts.append(text)
 
+            logger.debug(f"Number of texts to encode: {len(cleaned_texts)}")
+            logger.debug(f"Sample text: {cleaned_texts[0] if cleaned_texts else 'No texts'}")
+
             # Encode texts
             start_time = self.metrics.start_timer()
             embeddings = model.encode(
                 cleaned_texts,
-                normalize_embeddings=normalize,
+                normalize_embeddings=False,
                 show_progress_bar=False,
                 convert_to_numpy=True,
             )
 
-            # Ensure correct shape
-            if len(cleaned_texts) == 1:
-                embeddings = np.array([embeddings]) if len(embeddings.shape) == 1 else embeddings
+            # Convert to numpy array if needed
+            if not isinstance(embeddings, np.ndarray):
+                embeddings = np.array(embeddings)
+
+            # Ensure 2D array
+            if len(embeddings.shape) == 1:
+                embeddings = np.array([embeddings])
+
+            logger.debug(f"Raw embeddings shape: {embeddings.shape}")
+            logger.debug(f"Raw embeddings type: {embeddings.dtype}")
 
             # Resize if needed
             if embeddings.shape[1] != self.embedding_dim:
                 logger.warning(f"Resizing embeddings from {embeddings.shape[1]} to {self.embedding_dim}")
-                resized = []
-                for embedding in embeddings:
-                    # Pad or truncate to match target dimension
-                    if embedding.shape[0] > self.embedding_dim:
-                        resized.append(embedding[:self.embedding_dim])
-                    else:
-                        padded = np.zeros(self.embedding_dim)
-                        padded[:embedding.shape[0]] = embedding
-                        resized.append(padded)
-                embeddings = np.array(resized)
+                resized = np.zeros((len(embeddings), self.embedding_dim), dtype=np.float32)
+                min_dim = min(embeddings.shape[1], self.embedding_dim)
+                resized[:, :min_dim] = embeddings[:, :min_dim]
+                embeddings = resized
+
+            logger.debug(f"Resized embeddings shape: {embeddings.shape}")
+            logger.debug(f"Resized embeddings type: {embeddings.dtype}")
 
             # Ensure float32
             embeddings = embeddings.astype(np.float32)
@@ -137,13 +144,24 @@ class ModelService(BaseService):
                 norms[norms == 0] = 1
                 embeddings = embeddings / norms
 
+            # Ensure contiguous array
+            embeddings = np.ascontiguousarray(embeddings)
+
+            logger.debug(f"Final embeddings shape: {embeddings.shape}")
+            logger.debug(f"Final embeddings type: {embeddings.dtype}")
+            logger.debug(f"Final embeddings sample: {embeddings[0][:5] if len(embeddings) > 0 else 'No embeddings'}")
+            logger.debug(f"Final embeddings min: {np.min(embeddings)}")
+            logger.debug(f"Final embeddings max: {np.max(embeddings)}")
+            logger.debug(f"Final embeddings mean: {np.mean(embeddings)}")
+            logger.debug(f"Final embeddings is contiguous: {embeddings.flags['C_CONTIGUOUS']}")
+
             self.metrics.stop_timer(
                 start_time,
                 "model_encode",
                 {"model": model_name},
             )
 
-            return embeddings[0] if len(cleaned_texts) == 1 else embeddings
+            return embeddings
 
         except Exception as e:
             logger.error(f"Failed to encode texts: {e}")

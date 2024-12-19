@@ -30,18 +30,15 @@ class VectorStore(BaseService):
 
     def initialize(self) -> None:
         """Initialize vector store."""
-        if self.initialized:
-            return
-
         try:
-            # Create empty list for vectors
-            self.vectors = []
-            
-            self.initialized = True
+            # Initialize FAISS index with ID support
+            base_index = faiss.IndexFlatIP(self.dimension)
+            self.index = faiss.IndexIDMap(base_index)
             logger.info("Vector store initialized")
-
+            self.initialized = True
         except Exception as e:
             logger.error(f"Failed to initialize vector store: {e}")
+            self.metrics.increment("vector_store_errors")
             raise
 
     def cleanup(self) -> None:
@@ -63,55 +60,66 @@ class VectorStore(BaseService):
 
     def store_vectors(
         self,
-        vectors: Union[np.ndarray, List[np.ndarray]],
-        ids: Optional[List[int]] = None,
+        vectors: Union[List[List[float]], np.ndarray],
+        ids: Optional[Union[List[int], np.ndarray]] = None,
     ) -> None:
-        """Store vectors in index.
+        """Store vectors in the index.
         
         Args:
-            vectors: Vectors to store
-            ids: Optional vector IDs
+            vectors: List of vectors or numpy array
+            ids: Optional list of IDs or numpy array
         """
         if not self.initialized:
             self.initialize()
 
         try:
-            # Convert to numpy array if needed
+            # Convert vectors to numpy array if needed
             if isinstance(vectors, list):
                 vectors = np.array(vectors)
 
-            # Ensure 2D array
+            # Ensure vectors are 2D array
             if len(vectors.shape) == 1:
-                vectors = np.array([vectors])
+                vectors = vectors.reshape(1, -1)
 
             # Convert to float32
             vectors = vectors.astype(np.float32)
 
-            # Log vector info
-            logger.debug(f"Input vector shape: {vectors.shape}")
-            logger.debug(f"Input vector type: {vectors.dtype}")
-            logger.debug(f"Input vector sample: {vectors[0][:5]}")
-            logger.debug(f"Input vector min: {np.min(vectors)}")
-            logger.debug(f"Input vector max: {np.max(vectors)}")
-            logger.debug(f"Input vector mean: {np.mean(vectors)}")
-
             # Validate dimensions
             if vectors.shape[1] != self.dimension:
-                raise ValueError(
-                    f"Vector dimension mismatch: {vectors.shape[1]} != {self.dimension}"
-                )
+                raise ValueError(f"Vector dimension {vectors.shape[1]} does not match expected dimension {self.dimension}")
 
             # Normalize vectors
             faiss.normalize_L2(vectors)
 
-            # Add vectors
-            start_time = self.metrics.start_timer()
-            self.index.add(vectors)
+            # Log vector info
+            logger.debug(f"Adding {len(vectors)} vectors to index")
+            logger.debug(f"Vector shape: {vectors.shape}")
+            logger.debug(f"Vector type: {vectors.dtype}")
 
-            # Log index info
-            logger.debug(f"Index size after add: {self.index.ntotal}")
+            # Handle IDs
+            if ids is not None:
+                # Convert IDs to numpy array if needed
+                if isinstance(ids, list):
+                    ids = np.array(ids)
+                # Ensure IDs are 1D array
+                ids = ids.flatten()
+                # Convert to int64
+                ids = ids.astype(np.int64)
+                # Log ID info
+                logger.debug(f"Number of IDs: {len(ids)}")
+                logger.debug(f"ID array shape: {ids.shape}")
+                logger.debug(f"ID array type: {ids.dtype}")
+                logger.debug(f"Sample IDs: {ids[:5] if len(ids) > 5 else ids}")
+                # Validate ID count
+                if len(ids) != len(vectors):
+                    raise ValueError(f"Number of IDs ({len(ids)}) does not match number of vectors ({len(vectors)})")
+                # Add vectors with IDs
+                self.index.add_with_ids(vectors, ids)
+            else:
+                # Add vectors without IDs
+                self.index.add(vectors)
 
-            self.metrics.stop_timer(start_time, "vector_store")
+            # Update metrics
             self.metrics.increment(
                 "vectors_stored",
                 {"count": len(vectors)},
