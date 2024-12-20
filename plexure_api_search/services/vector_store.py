@@ -1,4 +1,51 @@
-"""Vector store service."""
+"""
+Vector Store Service for Plexure API Search
+
+This module provides vector storage and retrieval functionality using FAISS (Facebook AI Similarity Search).
+It manages the storage, indexing, and similarity search of vector embeddings for API endpoints.
+
+Key Features:
+- FAISS integration for efficient vector storage
+- Inner product similarity metric
+- ID mapping for endpoint metadata
+- Normalized L2 vectors
+- AVX2 optimizations
+- Batch vector operations
+- Persistence management
+- Cache integration
+- Index optimization
+
+The VectorStore class provides methods for:
+- Storing vectors with metadata
+- Searching similar vectors
+- Managing index lifecycle
+- Optimizing performance
+- Handling persistence
+- Monitoring health
+- Managing resources
+
+Example Usage:
+    from plexure_api_search.services.vector_store import VectorStore
+
+    # Initialize store
+    store = VectorStore(dimension=384)
+
+    # Store vectors
+    vectors = model.encode(texts)
+    ids = store.store_vectors(vectors, metadata)
+
+    # Search vectors
+    query_vector = model.encode(query)
+    results = store.search_vectors(query_vector, top_k=10)
+
+Performance Features:
+- Efficient similarity search with FAISS
+- Batch processing support
+- Memory-mapped storage
+- Index optimization
+- Cache integration
+- Resource management
+"""
 
 import logging
 import os
@@ -14,6 +61,7 @@ from ..monitoring.metrics import MetricsManager
 from ..services.models import model_service
 
 logger = logging.getLogger(__name__)
+
 
 class VectorStore:
     """Vector store for managing embeddings."""
@@ -93,7 +141,7 @@ class VectorStore:
         metadata: Optional[List[Dict]] = None,
     ) -> None:
         """Store vectors in the index.
-        
+
         Args:
             vectors: Vector array (n_vectors x dimension)
             ids: Vector IDs
@@ -146,11 +194,11 @@ class VectorStore:
         k: int = 10,
     ) -> Tuple[np.ndarray, np.ndarray, List[Dict]]:
         """Search for similar vectors.
-        
+
         Args:
             query_vector: Query vector
             k: Number of results to return
-            
+
         Returns:
             Tuple of (distances, indices, metadata)
         """
@@ -231,5 +279,6 @@ class VectorStore:
             logger.error(f"Failed to save index: {e}")
             raise
 
+
 # Global instance
-vector_store = VectorStore() 
+vector_store = VectorStore()

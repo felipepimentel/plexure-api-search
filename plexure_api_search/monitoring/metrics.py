@@ -1,11 +1,85 @@
-"""Metrics management."""
+"""
+Metrics Collection and Monitoring for Plexure API Search
+
+This module provides metrics collection and monitoring functionality for the Plexure API Search system.
+It handles the collection, aggregation, and reporting of various performance and operational metrics
+to enable monitoring and optimization of the system.
+
+Key Features:
+- Metric collection and aggregation
+- Performance monitoring
+- Resource utilization tracking
+- Error rate monitoring
+- Latency tracking
+- Request counting
+- Cache hit rates
+- System health metrics
+
+The MetricsManager class provides:
+- Counter metrics for events
+- Gauge metrics for values
+- Histogram metrics for distributions
+- Timer metrics for durations
+- Label support for segmentation
+- Metric persistence
+- Metric export
+
+Metric Categories:
+1. Search Metrics:
+   - Search requests
+   - Search latency
+   - Result counts
+   - Cache hit rates
+   - Error rates
+
+2. Index Metrics:
+   - Index size
+   - Index operations
+   - Processing time
+   - Memory usage
+   - Error rates
+
+3. System Metrics:
+   - CPU usage
+   - Memory usage
+   - Disk usage
+   - Network I/O
+   - Error rates
+
+Example Usage:
+    from plexure_api_search.monitoring.metrics import MetricsManager
+
+    # Initialize metrics
+    metrics = MetricsManager()
+
+    # Track counters
+    metrics.increment_counter("search_requests")
+    metrics.increment_counter("errors", labels={"type": "timeout"})
+
+    # Track values
+    metrics.set_gauge("index_size", 1000)
+    metrics.set_gauge("memory_usage_mb", 512)
+
+    # Track timing
+    with metrics.timer("search_duration"):
+        # Perform search
+        results = search.execute()
+
+Performance Features:
+- Efficient metric storage
+- Low overhead collection
+- Metric aggregation
+- Label support
+- Export capabilities
+"""
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 logger = logging.getLogger(__name__)
+
 
 class MetricsManager:
     """Metrics manager."""
@@ -40,11 +114,15 @@ class MetricsManager:
                 try:
                     start_http_server(self.port)
                     self._server_started = True
-                    logger.info(f"Started Prometheus metrics server on port {self.port}")
+                    logger.info(
+                        f"Started Prometheus metrics server on port {self.port}"
+                    )
                 except OSError as e:
                     if e.errno == 98:  # Address already in use
                         self._server_started = True
-                        logger.info(f"Metrics server already running on port {self.port}")
+                        logger.info(
+                            f"Metrics server already running on port {self.port}"
+                        )
                     else:
                         raise
 
@@ -101,9 +179,11 @@ class MetricsManager:
             "Embedding latency in seconds",
         )
 
-    def increment_counter(self, name: str, value: int = 1, labels: Optional[Dict] = None) -> None:
+    def increment_counter(
+        self, name: str, value: int = 1, labels: Optional[Dict] = None
+    ) -> None:
         """Increment counter.
-        
+
         Args:
             name: Counter name
             value: Value to increment by
@@ -128,7 +208,7 @@ class MetricsManager:
 
     def set_gauge(self, name: str, value: float) -> None:
         """Set gauge value.
-        
+
         Args:
             name: Gauge name
             value: Value to set
@@ -149,7 +229,7 @@ class MetricsManager:
 
     def observe_value(self, name: str, value: float) -> None:
         """Observe histogram value.
-        
+
         Args:
             name: Histogram name
             value: Value to observe
@@ -168,5 +248,6 @@ class MetricsManager:
         except Exception as e:
             logger.error(f"Failed to observe value for {name}: {e}")
 
+
 # Global instance
-metrics_manager = MetricsManager() 
+metrics_manager = MetricsManager()

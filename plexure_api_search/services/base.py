@@ -1,4 +1,75 @@
-"""Base service class for all services."""
+"""
+Base Service Module for Plexure API Search
+
+This module provides base classes and utilities for service implementation in the Plexure API Search system.
+It defines common functionality, interfaces, and patterns that all services should follow to ensure
+consistency and maintainability.
+
+Key Features:
+- Service lifecycle management
+- Resource management
+- Error handling
+- Health checking
+- Metrics collection
+- Dependency injection
+- Configuration management
+- Service registration
+
+The BaseService class provides:
+- Service initialization
+- Resource allocation
+- Cleanup handling
+- Health monitoring
+- Error recovery
+- Configuration access
+- Dependency management
+- Service registration
+
+Service Lifecycle:
+1. Initialization:
+   - Configuration loading
+   - Resource allocation
+   - Dependency injection
+   - Service registration
+
+2. Operation:
+   - Health monitoring
+   - Resource management
+   - Error handling
+   - Metrics collection
+
+3. Shutdown:
+   - Resource cleanup
+   - Connection closing
+   - Cache clearing
+   - Service deregistration
+
+Example Usage:
+    from plexure_api_search.services.base import BaseService
+
+    class MyService(BaseService):
+        def __init__(self):
+            super().__init__()
+            self.initialize()
+
+        def initialize(self):
+            # Initialize service
+            self.load_config()
+            self.setup_resources()
+
+        def cleanup(self):
+            # Cleanup resources
+            self.close_connections()
+            self.clear_cache()
+
+Service Features:
+- Lifecycle management
+- Resource handling
+- Error recovery
+- Health monitoring
+- Metrics collection
+- Configuration access
+"""
 
 import logging
 from typing import Any, Dict, Generic, Optional, TypeVar
@@ -116,4 +187,4 @@ __all__ = [
     "ServiceValidationError",
     "ServiceNotFoundError",
     "ServiceUnavailableError",
-] 
+]

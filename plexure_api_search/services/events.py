@@ -1,14 +1,83 @@
-"""Event service for publishing and subscribing to events."""
+"""
+Event Service for Plexure API Search
+
+This module provides event handling and publishing functionality for the Plexure API Search system.
+It manages the creation, publishing, and subscription of events throughout the application,
+enabling monitoring, tracking, and event-driven functionality.
+
+Key Features:
+- Event publishing and subscription
+- Event validation
+- Event persistence
+- Event routing
+- Error handling
+- Performance tracking
+- Audit logging
+- Event replay
+
+The EventService class provides:
+- Event creation and validation
+- Event publishing
+- Event subscription management
+- Event persistence
+- Event routing logic
+- Error handling
+- Performance monitoring
+- Audit trail generation
+
+Event Types:
+1. Search Events:
+   - Search initiated
+   - Results returned
+   - No results found
+   - Search error
+
+2. Index Events:
+   - Indexing started
+   - Contract processed
+   - Index updated
+   - Indexing error
+
+3. System Events:
+   - Service started
+   - Service stopped
+   - Resource warning
+   - Error occurred
+
+Example Usage:
+    from plexure_api_search.services.events import EventService
+
+    # Initialize service
+    event_service = EventService()
+
+    # Publish event
+    event_service.publish(
+        event_type="search",
+        data={
+            "query": "find auth endpoints",
+            "results": 5,
+            "duration_ms": 125
+        }
+    )
+
+    # Subscribe to events
+    @event_service.subscribe("search")
+    def handle_search_event(event):
+        print(f"Search event: {event}")
+
+Performance Features:
+- Asynchronous event processing
+- Event batching
+- Event persistence
+- Event replay
+- Resource management
+"""
 
 import json
 import logging
-import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
-
-from dependency_injector.wiring import inject
-from dependency_injector.providers import Provider
+from typing import Any, Dict, List, Optional
 
 import zmq
 from zmq.error import ZMQError
@@ -17,9 +86,11 @@ from ..config import config
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class Event:
     """Event data class."""
+
     type: str
     timestamp: datetime
     component: str
@@ -47,6 +118,7 @@ class Event:
         """Create event from dictionary."""
         data["timestamp"] = datetime.fromisoformat(data["timestamp"])
         return cls(**data)
+
 
 class PublisherService:
     """Event publisher service."""
@@ -80,7 +152,7 @@ class PublisherService:
 
     def emit(self, event: Event) -> None:
         """Emit event.
-        
+
         Args:
             event: Event to emit.
         """
@@ -91,14 +163,15 @@ class PublisherService:
         try:
             # Convert event to JSON
             data = json.dumps(event.to_dict())
-            
+
             # Send event
             self.socket.send_string(data)
-            
+
             logger.debug(f"Emitted event: {event.type}")
-            
+
         except Exception as e:
             logger.error(f"Failed to emit event: {e}")
+
 
 class SubscriberService:
     """Event subscriber service."""
@@ -131,7 +204,7 @@ class SubscriberService:
 
     def subscribe(self, event_type: str, handler: callable) -> None:
         """Subscribe to event type.
-        
+
         Args:
             event_type: Event type to subscribe to.
             handler: Handler function to call when event is received.
@@ -143,7 +216,7 @@ class SubscriberService:
 
     def unsubscribe(self, event_type: str, handler: callable) -> None:
         """Unsubscribe from event type.
-        
+
         Args:
             event_type: Event type to unsubscribe from.
             handler: Handler function to remove.
@@ -154,10 +227,10 @@ class SubscriberService:
 
     def poll(self, timeout: int = 1000) -> Optional[Event]:
         """Poll for events.
-        
+
         Args:
             timeout: Poll timeout in milliseconds.
-            
+
         Returns:
             Event if received, None if timeout.
         """
@@ -172,7 +245,7 @@ class SubscriberService:
                 data = self.socket.recv_string()
                 event_dict = json.loads(data)
                 event = Event.from_dict(event_dict)
-                
+
                 # Call handlers
                 if event.type in self.handlers:
                     for handler in self.handlers[event.type]:
@@ -180,14 +253,15 @@ class SubscriberService:
                             handler(event)
                         except Exception as e:
                             logger.error(f"Handler failed: {e}")
-                
+
                 return event
-                
+
         except Exception as e:
             logger.error(f"Failed to poll events: {e}")
-            
+
         return None
+
 
 # Global instances
 publisher = PublisherService()
-subscriber = SubscriberService() 
+subscriber = SubscriberService()

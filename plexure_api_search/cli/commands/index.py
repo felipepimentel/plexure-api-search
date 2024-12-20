@@ -1,9 +1,66 @@
-"""Index command."""
+"""
+Index Command for Plexure API Search CLI
+
+This module provides the index command functionality for the Plexure API Search CLI.
+It handles the command-line interface for indexing API contracts, managing the index,
+and providing feedback on indexing operations.
+
+Key Features:
+- API contract indexing
+- Index management
+- Progress tracking
+- Error handling
+- Status reporting
+- Batch processing
+- Index optimization
+- Cache management
+
+The module provides commands for:
+- Indexing API contracts
+- Managing index state
+- Clearing index
+- Optimizing index
+- Status reporting
+- Cache control
+
+Command Options:
+1. Indexing Parameters:
+   - Input directory/file
+   - Batch size
+   - Clear existing
+   - Recursive scan
+   - File patterns
+
+2. Index Management:
+   - Clear index
+   - Optimize index
+   - Show status
+   - Cache control
+   - Backup/restore
+
+3. Progress Options:
+   - Progress display
+   - Verbosity level
+   - Error reporting
+   - Status updates
+
+Example Usage:
+    $ plexure-api-search index apis/
+    $ plexure-api-search index --clear apis/*.yaml
+    $ plexure-api-search index --batch-size 32 apis/
+    $ plexure-api-search index --status
+
+Output Features:
+- Progress bars
+- Status updates
+- Error reporting
+- Statistics display
+- Performance metrics
+"""
 
 import logging
 import sys
 from pathlib import Path
-from typing import List
 
 import click
 from rich.console import Console
@@ -12,6 +69,7 @@ from ...indexing import indexer
 
 logger = logging.getLogger(__name__)
 console = Console()
+
 
 @click.command()
 @click.option(

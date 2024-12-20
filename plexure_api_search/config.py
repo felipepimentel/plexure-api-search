@@ -1,21 +1,77 @@
-"""Configuration management."""
+"""
+Configuration Management for Plexure API Search
+
+This module provides configuration management functionality for the Plexure API Search system.
+It implements a singleton pattern to ensure consistent configuration across the application and
+handles loading settings from various sources including environment variables and configuration files.
+
+Key Features:
+- Singleton pattern for global configuration access
+- Environment variable support with validation
+- Configuration file loading (YAML/JSON)
+- Default value management
+- Type validation and conversion
+- Dynamic configuration updates
+- Configuration persistence
+- Environment-specific settings (dev/prod/test)
+
+The Config class provides methods for:
+- Loading configuration from environment variables
+- Accessing configuration values with type safety
+- Updating configuration at runtime
+- Validating configuration values
+- Persisting configuration changes
+- Managing environment-specific settings
+
+Example Usage:
+    from plexure_api_search.config import Config
+
+    # Get configuration instance
+    config = Config()
+
+    # Access settings
+    model_name = config.model_name
+    batch_size = config.model_batch_size
+
+    # Update settings
+    config.update({
+        "model_batch_size": 64,
+        "min_score": 0.3
+    })
+
+Environment Variables:
+    ENVIRONMENT: Environment name (development/staging/production)
+    DEBUG: Enable debug mode (true/false)
+    API_DIR: Directory containing API contracts
+    CACHE_DIR: Cache directory
+    MODEL_NAME: Embedding model name
+    MODEL_DIMENSION: Embedding dimension
+    MODEL_BATCH_SIZE: Model batch size
+    ENABLE_TELEMETRY: Enable metrics collection
+    MIN_SCORE: Minimum similarity score
+    TOP_K: Default number of results
+    LOG_LEVEL: Logging level
+"""
 
 import logging
 import os
-from pathlib import Path
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
+
 class Environment(str, Enum):
     """Environment enumeration."""
+
     DEVELOPMENT = "development"
     STAGING = "staging"
     PRODUCTION = "production"
 
+
 class Config:
     """Configuration settings."""
+
     _instance = None
 
     def __new__(cls):
@@ -69,6 +125,7 @@ class Config:
         # Load environment from .env file if it exists
         if os.path.exists(".env"):
             from dotenv import load_dotenv
+
             load_dotenv()
 
         # Environment
@@ -82,20 +139,35 @@ class Config:
 
         # Model
         self.model_name = os.getenv("MODEL_NAME", self.model_name)
-        self.model_dimension = int(os.getenv("MODEL_DIMENSION", str(self.model_dimension)))
-        self.model_batch_size = int(os.getenv("MODEL_BATCH_SIZE", str(self.model_batch_size)))
-        self.model_normalize_embeddings = os.getenv("MODEL_NORMALIZE_EMBEDDINGS", str(self.model_normalize_embeddings)).lower() == "true"
+        self.model_dimension = int(
+            os.getenv("MODEL_DIMENSION", str(self.model_dimension))
+        )
+        self.model_batch_size = int(
+            os.getenv("MODEL_BATCH_SIZE", str(self.model_batch_size))
+        )
+        self.model_normalize_embeddings = (
+            os.getenv(
+                "MODEL_NORMALIZE_EMBEDDINGS", str(self.model_normalize_embeddings)
+            ).lower()
+            == "true"
+        )
 
         # Monitoring
-        self.enable_telemetry = os.getenv("ENABLE_TELEMETRY", str(self.enable_telemetry)).lower() == "true"
+        self.enable_telemetry = (
+            os.getenv("ENABLE_TELEMETRY", str(self.enable_telemetry)).lower() == "true"
+        )
         self.metrics_backend = os.getenv("METRICS_BACKEND", self.metrics_backend)
         self.publisher_port = int(os.getenv("PUBLISHER_PORT", str(self.publisher_port)))
 
         # Search
         self.min_score = float(os.getenv("MIN_SCORE", str(self.min_score)))
         self.top_k = int(os.getenv("TOP_K", str(self.top_k)))
-        self.expand_query = os.getenv("EXPAND_QUERY", str(self.expand_query)).lower() == "true"
-        self.rerank_results = os.getenv("RERANK_RESULTS", str(self.rerank_results)).lower() == "true"
+        self.expand_query = (
+            os.getenv("EXPAND_QUERY", str(self.expand_query)).lower() == "true"
+        )
+        self.rerank_results = (
+            os.getenv("RERANK_RESULTS", str(self.rerank_results)).lower() == "true"
+        )
 
         # Logging
         self.log_level = os.getenv("LOG_LEVEL", self.log_level).upper()
@@ -132,6 +204,7 @@ class Config:
             "log_level": self.log_level,
             "log_format": self.log_format,
         }
+
 
 # Create global instance
 config = Config()

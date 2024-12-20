@@ -1,4 +1,54 @@
-"""Model service."""
+"""
+Model Service for Plexure API Search
+
+This module provides model management and embedding generation functionality using transformer models.
+It handles the loading, caching, and execution of language models for generating vector embeddings
+of API endpoints and search queries.
+
+Key Features:
+- Model loading and management
+- Embedding generation
+- Batch processing
+- Model caching
+- Resource optimization
+- Error handling
+- Performance monitoring
+- Model versioning
+
+The ModelService class provides:
+- Model initialization and loading
+- Embedding generation for texts
+- Batch processing capabilities
+- Model caching and persistence
+- Resource cleanup
+- Health monitoring
+- Error recovery
+
+Example Usage:
+    from plexure_api_search.services.models import ModelService
+
+    # Initialize service
+    model_service = ModelService(
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        dimension=384
+    )
+
+    # Generate embeddings
+    texts = ["endpoint description 1", "endpoint description 2"]
+    embeddings = model_service.get_embeddings(texts)
+
+Supported Models:
+- sentence-transformers/all-MiniLM-L6-v2 (default)
+- sentence-transformers/all-mpnet-base-v2
+- sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+Performance Features:
+- Batch processing for efficiency
+- Model caching
+- Resource optimization
+- Memory management
+- Error recovery
+"""
 
 import logging
 from typing import List, Union
@@ -10,6 +60,7 @@ from ..config import config
 from ..monitoring.metrics import MetricsManager
 
 logger = logging.getLogger(__name__)
+
 
 class ModelService:
     """Model service for generating embeddings."""
@@ -50,10 +101,10 @@ class ModelService:
 
     def get_embeddings(self, text: Union[str, List[str]]) -> np.ndarray:
         """Get embeddings for text.
-        
+
         Args:
             text: Text to embed (string or list of strings)
-            
+
         Returns:
             Embeddings array (n_texts x dimension)
         """
@@ -89,5 +140,6 @@ class ModelService:
             self.metrics.increment_counter("embedding_errors")
             raise
 
+
 # Global instance
-model_service = ModelService() 
+model_service = ModelService()
