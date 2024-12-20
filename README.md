@@ -1,6 +1,6 @@
 # Plexure API Search 🔍
 
-> An experimental semantic search engine for API contracts using advanced NLP techniques and vector embeddings.
+> A semantic search engine for API contracts using advanced NLP techniques and vector embeddings.
 
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Poetry](https://img.shields.io/badge/Poetry-Package%20Manager-blue.svg)](https://python-poetry.org/)
@@ -10,8 +10,8 @@
 
 - 🔍 Semantic search over API endpoints using state-of-the-art language models
 - 🚀 High-performance vector similarity search with FAISS
-- 📊 Multi-model architecture for robust embeddings
-- 🔄 Automatic query expansion and result reranking
+- 📊 Efficient vector storage and retrieval
+- 🔄 Automatic metadata association and retrieval
 - 🎯 Configurable similarity thresholds and search parameters
 - 📈 Built-in monitoring and metrics collection
 - 💾 Efficient caching system for improved performance
@@ -19,66 +19,134 @@
 
 ## 🏗️ Architecture
 
+The system is built with a modular architecture focusing on maintainability and performance:
+
 ```mermaid
 graph TD
     A[API Contracts] --> B[Contract Parser]
-    B --> C[Text Processor]
-    C --> D[Embedding Generator]
+    B --> C[Indexer]
+    C --> D[Model Service]
     D --> E[Vector Store]
-    F[Search Query] --> G[Query Processor]
-    G --> H[Query Embedding]
-    H --> I[Vector Search]
-    E --> I
-    I --> J[Result Ranker]
-    J --> K[Results]
+    F[Search Query] --> G[Searcher]
+    G --> D
+    D --> H[Vector Search]
+    E --> H
+    H --> I[Results]
+
+    subgraph Services
+        D
+        E
+    end
+
+    subgraph Indexing
+        B
+        C
+    end
+
+    subgraph Search
+        G
+        H
+    end
+
+    subgraph Monitoring
+        M[Metrics Manager]
+        P[Event Publisher]
+        S[Event Subscriber]
+    end
+
+    D --> M
+    E --> M
+    G --> M
+    C --> M
 
     style A fill:#f9f,stroke:#333,stroke-width:2px
     style F fill:#bbf,stroke:#333,stroke-width:2px
-    style K fill:#bfb,stroke:#333,stroke-width:2px
+    style I fill:#bfb,stroke:#333,stroke-width:2px
 ```
 
 ### 🔄 Data Flow
 
 1. **Indexing Pipeline**:
-   ```
-   API Contract → Parse → Extract Endpoints → Generate Text → Embed → Store Vectors
-   ```
+
+```mermaid
+sequenceDiagram
+    participant CLI
+    participant Indexer
+    participant Parser
+    participant Model
+    participant VectorStore
+    participant Metrics
+
+    CLI->>Indexer: index_contract(file)
+    Indexer->>Parser: parse_contract(file)
+    Parser-->>Indexer: endpoints[]
+
+    loop For each endpoint
+        Indexer->>Model: get_embeddings(text)
+        Model-->>Indexer: vector
+        Indexer->>VectorStore: store_vectors(vectors, metadata)
+    end
+
+    Indexer->>Metrics: update_metrics()
+    Metrics-->>Indexer: ok
+    Indexer-->>CLI: success
+```
 
 2. **Search Pipeline**:
-   ```
-   Query → Process → Embed → Search Vectors → Rank → Format Results
-   ```
+
+```mermaid
+sequenceDiagram
+    participant CLI
+    participant Searcher
+    participant Model
+    participant VectorStore
+    participant Metrics
+
+    CLI->>Searcher: search(query)
+    Searcher->>Model: get_embeddings(query)
+    Model-->>Searcher: query_vector
+
+    Searcher->>VectorStore: search_vectors(query_vector)
+    VectorStore-->>Searcher: results, metadata
+
+    Searcher->>Metrics: update_metrics()
+    Metrics-->>Searcher: ok
+
+    Searcher-->>CLI: formatted_results
+```
 
 ### 🧠 Core Components
 
 #### Vector Store (FAISS)
+
 - Inner Product similarity metric
 - ID mapping for endpoint metadata
 - Normalized L2 vectors
 - AVX2 optimizations
 
-#### Embedding Models
-- Primary: `sentence-transformers/all-mpnet-base-v2` (768d)
-- Fallback: `sentence-transformers/all-MiniLM-L6-v2`
-- Multilingual: `sentence-transformers/paraphrase-multilingual-mpnet-base-v2`
+#### Embedding Model
 
-#### Caching System
-```mermaid
-graph LR
-    A[Request] --> B{Cache Hit?}
-    B -- Yes --> C[Return Cached]
-    B -- No --> D[Compute]
-    D --> E[Cache Result]
-    E --> F[Return Fresh]
-```
+- Default: `sentence-transformers/all-MiniLM-L6-v2` (384d)
+- Normalized embeddings
+- Batched processing support
+- Configurable through environment variables
+
+#### Monitoring System
+
+- Prometheus metrics integration
+- Custom event system for tracking
+- Performance monitoring
+- Resource utilization tracking
 
 ## 🚀 Getting Started
 
 ### Prerequisites
+
 - Python 3.9+
 - Poetry for dependency management
 
 ### Installation
+
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/plexure-api-search.git
@@ -91,86 +159,133 @@ poetry install
 ### Usage
 
 1. **Index API Contracts**:
+
 ```bash
+# Clear existing index and re-index
+poetry run python -m plexure_api_search index --clear
+
+# Index without clearing
 poetry run python -m plexure_api_search index
 ```
 
 2. **Search Endpoints**:
+
 ```bash
+# Basic search
 poetry run python -m plexure_api_search search "find authentication endpoints"
+
+# Search with limit
+poetry run python -m plexure_api_search search "create user" --top-k 5
 ```
 
 ### Configuration
 
-Key settings in `config.py`:
-```python
-vectors.dimension = 768  # Embedding dimension
-bi_encoder_model = "sentence-transformers/all-mpnet-base-v2"
-min_score = 0.1  # Minimum similarity threshold
-enable_telemetry = True  # Metrics collection
+Configuration is managed through environment variables and `.env` files:
+
+```bash
+# Environment
+ENVIRONMENT=development  # development, staging, production
+DEBUG=false
+
+# Paths
+API_DIR=assets/apis
+CACHE_DIR=.cache/default
+METRICS_DIR=.cache/metrics
+
+# Model
+MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+MODEL_DIMENSION=384
+MODEL_BATCH_SIZE=32
+MODEL_NORMALIZE_EMBEDDINGS=true
+
+# Monitoring
+ENABLE_TELEMETRY=true
+METRICS_BACKEND=prometheus
+PUBLISHER_PORT=5555
+
+# Search
+MIN_SCORE=0.1
+TOP_K=10
+EXPAND_QUERY=true
+RERANK_RESULTS=true
+
+# Logging
+LOG_LEVEL=INFO
 ```
 
 ## 📊 Performance Metrics
 
-### Search Latency
-```
-P50: 150ms
-P95: 250ms
-P99: 350ms
-```
+The system collects various metrics through the Prometheus integration:
 
-### Memory Usage
-- Index Size: ~100MB per 1000 endpoints
-- Runtime: ~500MB base + ~2MB per concurrent search
+### Counters
 
-### Accuracy (Internal Tests)
-- Precision@1: 0.85
-- Recall@5: 0.92
-- MRR: 0.88
+- `embeddings_generated_total`: Total number of embeddings generated
+- `embedding_errors_total`: Total number of embedding errors
+- `searches_performed_total`: Total number of searches performed
+- `search_errors_total`: Total number of search errors
+- `contract_errors_total`: Total number of contract errors
+
+### Gauges
+
+- `index_size`: Number of vectors in index
+- `metadata_size`: Number of metadata entries
+
+### Histograms
+
+- `search_latency_seconds`: Search latency in seconds
+- `embedding_latency_seconds`: Embedding latency in seconds
 
 ## 🔬 Technical Details
 
-### Vector Similarity
-
-We use cosine similarity in a normalized vector space:
-```python
-score = 1.0 - distance  # Convert FAISS distance to similarity
-```
-
-### Query Processing
-
-1. Text cleaning and normalization
-2. Optional query expansion
-3. Embedding generation
-4. Vector similarity search
-5. Result reranking (optional)
-
-### Monitoring
-
-Built-in metrics:
-- Search latency
-- Cache hit rates
-- Vector store operations
-- Model inference time
-- Error rates
-- Resource utilization
-
-## 🔧 Development
-
 ### Project Structure
+
 ```
 plexure_api_search/
-├── cli/               # Command-line interface
-├── config/           # Configuration management
-├── indexing/         # API contract indexing
-├── monitoring/       # Metrics and monitoring
-├── search/          # Search functionality
-└── services/        # Core services
-    ├── models.py    # Embedding models
+├── cli/                # Command-line interface
+│   └── commands/      # CLI commands
+├── config/            # Configuration management
+├── indexing/          # API contract indexing
+│   ├── indexer.py    # Indexing logic
+│   └── parser.py     # Contract parsing
+├── monitoring/        # Metrics and monitoring
+│   └── metrics.py    # Metrics management
+├── search/           # Search functionality
+│   └── searcher.py   # Search logic
+└── services/         # Core services
+    ├── events.py     # Event system
+    ├── models.py     # Embedding models
     └── vector_store.py  # FAISS integration
 ```
 
+### Key Features
+
+1. **Singleton Pattern**
+
+   - Used for configuration, metrics, and service management
+   - Ensures consistent state across components
+   - Proper cleanup and initialization
+
+2. **Vector Storage**
+
+   - FAISS IndexIDMap for efficient retrieval
+   - Metadata association with vectors
+   - Persistent storage with automatic loading/saving
+
+3. **Monitoring**
+
+   - Prometheus metrics integration
+   - Event system for tracking operations
+   - Comprehensive error logging
+
+4. **Search Quality**
+   - Semantic similarity scoring
+   - Metadata-enriched results
+   - Configurable result limits
+
+## 🔧 Development
+
 ### Testing
+
 ```bash
 # Run tests
 poetry run pytest
@@ -179,36 +294,31 @@ poetry run pytest
 poetry run pytest --cov=plexure_api_search
 ```
 
-### Benchmarking
-```bash
-# Run benchmarks
-poetry run python -m plexure_api_search benchmark
-```
+### Code Style
+
+- Follow PEP 8 guidelines
+- Use type hints
+- Document public interfaces
+- Keep functions focused and single-purpose
 
 ## 📈 Future Improvements
 
-1. **Enhanced Search**
-   - Cross-lingual search support
-   - Semantic query expansion
-   - Context-aware reranking
+1. **Search Enhancements**
+
+   - Query expansion
+   - Result reranking
+   - Faceted search
 
 2. **Performance**
-   - Distributed vector store
+
    - Batch processing optimization
-   - GPU acceleration
+   - Caching improvements
+   - Parallel processing
 
 3. **Features**
-   - Interactive query refinement
-   - Relevance feedback
+   - API versioning support
+   - Schema validation
    - Custom scoring functions
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
 
 ## 📝 License
 
@@ -218,9 +328,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - FAISS team at Facebook Research
 - Sentence Transformers by UKP Lab
-- OpenAI for inspiration
 - The amazing open-source community
 
 ---
 
-Made with ❤️ by [Your Name/Team]
+Made with ❤️ by Your Team

@@ -2,464 +2,621 @@
 
 ## Common Issues
 
-### Installation Issues
-
-1. Package Installation Fails
-```
-Problem: pip install fails with dependency conflicts
-Solution:
-- Create fresh virtual environment
-- Upgrade pip: pip install --upgrade pip
-- Install with extras: pip install "plexure-api-search[all]"
-```
-
-2. CUDA Installation
-```
-Problem: GPU support not working
-Solution:
-- Verify CUDA installation: nvidia-smi
-- Install correct CUDA version: cuda-11.0+
-- Set CUDA_VISIBLE_DEVICES
-```
-
-### Configuration Issues
-
-1. Invalid Configuration
-```
-Problem: Service fails to start with configuration error
-Solution:
-- Validate config: plexure-api-search validate
-- Check environment variables
-- Verify file permissions
-```
-
-2. Missing API Directory
-```
-Problem: No API files found
-Solution:
-- Verify API_DIR path exists
-- Check file permissions
-- Ensure correct file formats (YAML/JSON)
-```
-
 ### Search Issues
 
-1. Poor Search Results
-```
-Problem: Irrelevant or missing results
-Solution:
-- Update index: plexure-api-search index --force
-- Check query construction
-- Adjust min_score in config
-- Verify API contract quality
+#### No Results Found
+
+**Symptoms:**
+
+- Search returns empty results
+- Search returns fewer results than expected
+- Results have low relevance scores
+
+**Possible Causes:**
+
+1. API contracts not indexed
+2. Query format issues
+3. Similarity threshold too high
+4. Poor contract descriptions
+5. Model mismatch
+
+**Solutions:**
+
+1. Check indexing:
+
+```bash
+poetry run python -m plexure_api_search index --status
 ```
 
-2. Slow Search Performance
+2. Verify query format:
+
+- Use clear, descriptive queries
+- Include relevant keywords
+- Check for typos
+
+3. Adjust similarity threshold:
+
+```bash
+export MIN_SCORE=0.1  # Lower threshold
 ```
-Problem: High search latency
-Solution:
-- Enable caching
-- Optimize batch size
-- Scale vector store
-- Monitor resource usage
+
+4. Review contract descriptions:
+
+- Ensure descriptions are clear
+- Add relevant keywords
+- Use consistent terminology
+
+5. Check model configuration:
+
+```bash
+poetry run python -m plexure_api_search config show
 ```
+
+#### Poor Search Results
+
+**Symptoms:**
+
+- Irrelevant results
+- Missing obvious matches
+- Inconsistent rankings
+
+**Possible Causes:**
+
+1. Query expansion issues
+2. Reranking problems
+3. Model configuration
+4. Contract quality
+
+**Solutions:**
+
+1. Configure query expansion:
+
+```bash
+export EXPAND_QUERY=true
+```
+
+2. Enable reranking:
+
+```bash
+export RERANK_RESULTS=true
+```
+
+3. Update model settings:
+
+```bash
+export MODEL_NORMALIZE_EMBEDDINGS=true
+```
+
+4. Improve contracts:
+
+- Add detailed descriptions
+- Use consistent formatting
+- Include example usage
 
 ### Indexing Issues
 
-1. Failed Indexing
-```
-Problem: Indexing process fails
-Solution:
-- Check API file formats
-- Verify Pinecone connection
-- Monitor memory usage
-- Use incremental indexing
+#### Indexing Fails
+
+**Symptoms:**
+
+- Index command fails
+- Partial indexing
+- Missing endpoints
+
+**Possible Causes:**
+
+1. Invalid contract format
+2. File permissions
+3. Storage space
+4. Memory issues
+
+**Solutions:**
+
+1. Validate contracts:
+
+```bash
+poetry run python -m plexure_api_search validate
 ```
 
-2. Missing Documents
-```
-Problem: Documents not appearing in search
-Solution:
-- Check indexing status
-- Verify document format
-- Update index manually
-- Check error logs
+2. Check permissions:
+
+```bash
+ls -la assets/apis/
+chmod -R 644 assets/apis/*
 ```
 
-### Vector Store Issues
+3. Verify storage:
 
-1. Connection Errors
-```
-Problem: Cannot connect to Pinecone
-Solution:
-- Verify API key and environment
-- Check network connectivity
-- Test with pinecone-cli
-- Monitor rate limits
+```bash
+df -h
+du -sh .cache/
 ```
 
-2. Out of Memory
+4. Monitor memory:
+
+```bash
+free -h
+top -p $(pgrep -f plexure-api-search)
 ```
-Problem: Vector store operations fail with OOM
-Solution:
-- Reduce batch size
-- Implement sharding
-- Scale resources
-- Clean unused vectors
+
+#### Slow Indexing
+
+**Symptoms:**
+
+- Long indexing times
+- High CPU usage
+- Memory warnings
+
+**Possible Causes:**
+
+1. Large contracts
+2. Small batch size
+3. Resource constraints
+4. Cache issues
+
+**Solutions:**
+
+1. Split contracts:
+
+- Break into smaller files
+- Use modular structure
+
+2. Adjust batch size:
+
+```bash
+export MODEL_BATCH_SIZE=64
+```
+
+3. Increase resources:
+
+- Add CPU cores
+- Increase RAM
+- Use SSD storage
+
+4. Clear cache:
+
+```bash
+rm -rf .cache/*
 ```
 
 ### Performance Issues
 
-1. High CPU Usage
-```
-Problem: Service using excessive CPU
-Solution:
-- Profile with: plexure-api-search profile
-- Optimize batch processing
-- Scale horizontally
-- Monitor worker processes
+#### High Latency
+
+**Symptoms:**
+
+- Slow search responses
+- Timeouts
+- High CPU usage
+
+**Possible Causes:**
+
+1. Resource constraints
+2. Large index size
+3. Cache misses
+4. Network issues
+
+**Solutions:**
+
+1. Monitor resources:
+
+```bash
+top -p $(pgrep -f plexure-api-search)
 ```
 
-2. Memory Leaks
-```
-Problem: Growing memory usage
-Solution:
-- Enable memory profiling
-- Check resource cleanup
-- Monitor memory patterns
-- Implement circuit breakers
+2. Optimize index:
+
+```bash
+poetry run python -m plexure_api_search index --optimize
 ```
 
-### Monitoring Issues
+3. Configure cache:
 
-1. Missing Metrics
-```
-Problem: Metrics not appearing
-Solution:
-- Check Prometheus config
-- Verify metrics endpoint
-- Enable debug logging
-- Check collector status
+```bash
+export CACHE_DIR=.cache/production
 ```
 
-2. False Alerts
+4. Check network:
+
+```bash
+netstat -tulpn | grep 5555
 ```
-Problem: Receiving incorrect alerts
-Solution:
-- Adjust thresholds
-- Verify alert rules
-- Check metric values
-- Update alert conditions
+
+#### Memory Issues
+
+**Symptoms:**
+
+- Out of memory errors
+- Swap usage
+- Process crashes
+
+**Possible Causes:**
+
+1. Large model
+2. Memory leaks
+3. Cache size
+4. Concurrent requests
+
+**Solutions:**
+
+1. Use smaller model:
+
+```bash
+export MODEL_NAME="sentence-transformers/all-MiniLM-L6-v2"
+```
+
+2. Monitor memory:
+
+```bash
+watch -n 1 'ps -o pid,ppid,%mem,rss,cmd -p $(pgrep -f plexure-api-search)'
+```
+
+3. Limit cache:
+
+```bash
+find .cache/ -type f -mtime +7 -delete
+```
+
+4. Rate limiting:
+
+```bash
+export MAX_CONCURRENT_REQUESTS=10
+```
+
+### Configuration Issues
+
+#### Environment Variables
+
+**Symptoms:**
+
+- Missing configuration
+- Default values used
+- Unexpected behavior
+
+**Possible Causes:**
+
+1. Unset variables
+2. Invalid values
+3. Permission issues
+4. Shell configuration
+
+**Solutions:**
+
+1. Check variables:
+
+```bash
+env | grep PLEXURE
+```
+
+2. Validate values:
+
+```bash
+poetry run python -m plexure_api_search config validate
+```
+
+3. Set permissions:
+
+```bash
+chmod 600 .env
+```
+
+4. Update shell:
+
+```bash
+source .env
+```
+
+#### File Paths
+
+**Symptoms:**
+
+- File not found errors
+- Permission denied
+- Path resolution issues
+
+**Possible Causes:**
+
+1. Invalid paths
+2. Missing directories
+3. Permission issues
+4. Relative paths
+
+**Solutions:**
+
+1. Check paths:
+
+```bash
+ls -la $(poetry run python -m plexure_api_search config paths)
+```
+
+2. Create directories:
+
+```bash
+mkdir -p assets/apis .cache/default .cache/metrics
+```
+
+3. Set permissions:
+
+```bash
+chmod -R 755 assets/apis/
+```
+
+4. Use absolute paths:
+
+```bash
+export API_DIR=$(pwd)/assets/apis
+```
+
+### Model Issues
+
+#### Model Loading
+
+**Symptoms:**
+
+- Model load failures
+- Initialization errors
+- Missing files
+
+**Possible Causes:**
+
+1. Download issues
+2. Corruption
+3. Version mismatch
+4. Cache problems
+
+**Solutions:**
+
+1. Clear cache:
+
+```bash
+rm -rf .models/*
+```
+
+2. Verify files:
+
+```bash
+poetry run python -m plexure_api_search model verify
+```
+
+3. Check version:
+
+```bash
+poetry run python -m plexure_api_search model info
+```
+
+4. Update cache:
+
+```bash
+poetry run python -m plexure_api_search model update
+```
+
+#### Embedding Issues
+
+**Symptoms:**
+
+- Embedding errors
+- Dimension mismatch
+- Quality issues
+
+**Possible Causes:**
+
+1. Model configuration
+2. Input format
+3. Normalization
+4. Batch size
+
+**Solutions:**
+
+1. Check config:
+
+```bash
+poetry run python -m plexure_api_search model config
+```
+
+2. Validate input:
+
+```bash
+poetry run python -m plexure_api_search validate --input
+```
+
+3. Enable normalization:
+
+```bash
+export MODEL_NORMALIZE_EMBEDDINGS=true
+```
+
+4. Adjust batch:
+
+```bash
+export MODEL_BATCH_SIZE=32
+```
+
+### Logging and Monitoring
+
+#### Missing Logs
+
+**Symptoms:**
+
+- No log output
+- Incomplete logs
+- Wrong log level
+
+**Possible Causes:**
+
+1. Log configuration
+2. File permissions
+3. Disk space
+4. Log rotation
+
+**Solutions:**
+
+1. Set log level:
+
+```bash
+export LOG_LEVEL=DEBUG
+```
+
+2. Check permissions:
+
+```bash
+chmod 644 logs/*.log
+```
+
+3. Check space:
+
+```bash
+df -h logs/
+```
+
+4. Configure rotation:
+
+```bash
+find logs/ -type f -mtime +7 -delete
+```
+
+#### Metrics Issues
+
+**Symptoms:**
+
+- Missing metrics
+- Invalid values
+- Collection errors
+
+**Possible Causes:**
+
+1. Telemetry disabled
+2. Port conflicts
+3. Backend issues
+4. Collection errors
+
+**Solutions:**
+
+1. Enable telemetry:
+
+```bash
+export ENABLE_TELEMETRY=true
+```
+
+2. Check port:
+
+```bash
+netstat -tulpn | grep 5555
+```
+
+3. Verify backend:
+
+```bash
+curl http://localhost:5555/metrics
+```
+
+4. Reset metrics:
+
+```bash
+rm -rf .cache/metrics/*
 ```
 
 ## Debugging Tools
 
 ### Log Analysis
 
-1. Enable Debug Logging
+1. View recent logs:
+
 ```bash
-# Set log level
-export LOG_LEVEL=DEBUG
-
-# Run with debug output
-plexure-api-search serve --debug
-
-# Check logs
-tail -f /var/log/plexure/debug.log
+tail -f logs/app.log
 ```
 
-2. Log Patterns
-```
-# Error patterns to watch:
-- "Failed to connect" -> Network issues
-- "Out of memory" -> Resource issues
-- "Timeout exceeded" -> Performance issues
-- "Invalid format" -> Data issues
-```
+2. Search errors:
 
-### Performance Profiling
-
-1. CPU Profiling
 ```bash
-# Run with profiler
-plexure-api-search profile cpu
-
-# Analyze results
-plexure-api-search profile analyze cpu.prof
+grep ERROR logs/app.log
 ```
 
-2. Memory Profiling
+3. Count occurrences:
+
 ```bash
-# Track memory usage
-plexure-api-search profile memory
-
-# Find leaks
-plexure-api-search profile leaks
+grep -c "pattern" logs/app.log
 ```
 
-### Network Diagnostics
+### Performance Analysis
 
-1. Connection Testing
+1. CPU profiling:
+
 ```bash
-# Test Pinecone
-plexure-api-search test pinecone
-
-# Test endpoints
-plexure-api-search test endpoints
-
-# Monitor latency
-plexure-api-search monitor latency
+poetry run python -m cProfile -o profile.stats main.py
 ```
 
-2. Traffic Analysis
+2. Memory profiling:
+
 ```bash
-# Monitor requests
-plexure-api-search monitor requests
-
-# Check bandwidth
-plexure-api-search monitor bandwidth
+poetry run python -m memory_profiler main.py
 ```
 
-## Recovery Procedures
+3. System monitoring:
 
-### Service Recovery
-
-1. Service Fails to Start
 ```bash
-# Check status
-systemctl status plexure
-
-# View logs
-journalctl -u plexure -n 100
-
-# Restart service
-systemctl restart plexure
+htop -p $(pgrep -f plexure-api-search)
 ```
 
-2. Service Becomes Unresponsive
+### Network Analysis
+
+1. Port scanning:
+
 ```bash
-# Check health
-curl http://localhost:8000/health
-
-# Kill stuck process
-pkill -f plexure-api-search
-
-# Restart with monitoring
-plexure-api-search serve --monitor
+netstat -tulpn
 ```
 
-### Data Recovery
+2. Traffic monitoring:
 
-1. Index Corruption
 ```bash
-# Backup current state
-plexure-api-search backup
-
-# Clear index
-plexure-api-search index --clear
-
-# Rebuild index
-plexure-api-search index --force
+tcpdump -i any port 5555
 ```
 
-2. Lost Vector Data
+3. Connection testing:
+
 ```bash
-# Restore from backup
-plexure-api-search restore --latest
-
-# Verify restoration
-plexure-api-search verify
-
-# Rebuild if needed
-plexure-api-search rebuild
+curl -v http://localhost:5555/health
 ```
 
-### System Recovery
+## Support Resources
 
-1. Resource Exhaustion
+### Documentation
+
+1. View docs:
+
 ```bash
-# Free resources
-plexure-api-search cleanup
-
-# Scale resources
-plexure-api-search scale up
-
-# Monitor usage
-plexure-api-search monitor resources
+poetry run python -m plexure_api_search docs
 ```
 
-2. Network Issues
+2. API reference:
+
 ```bash
-# Test connectivity
-plexure-api-search test network
-
-# Reset connections
-plexure-api-search reset connections
-
-# Enable fallback
-plexure-api-search enable fallback
+poetry run python -m plexure_api_search docs api
 ```
 
-## Prevention Measures
+### Community Support
 
-### Monitoring Setup
+1. GitHub Issues:
 
-1. Health Checks
-```yaml
-monitoring:
-  health_check:
-    enabled: true
-    interval: 60
-    timeout: 10
-    endpoints:
-      - /health
-      - /metrics
-```
+- Report bugs
+- Request features
+- Share feedback
 
-2. Alert Configuration
-```yaml
-alerts:
-  rules:
-    - name: high_error_rate
-      condition: error_rate > 0.1
-      duration: 5m
-      severity: critical
-```
+2. Discussion Forums:
 
-### Backup Strategy
+- Ask questions
+- Share experiences
+- Get help
 
-1. Regular Backups
-```yaml
-backup:
-  schedule: "0 2 * * *"
-  retention: 7
-  type: full
-  destination: s3://backup
-```
+### Contact Support
 
-2. Verification
-```yaml
-verify:
-  schedule: "0 3 * * *"
-  checks:
-    - backup_integrity
-    - data_consistency
-```
+1. Email Support:
 
-### Resource Management
+- support@plexure.com
+- Include logs
+- Describe steps
 
-1. Resource Limits
-```yaml
-resources:
-  limits:
-    cpu: 4
-    memory: 8Gi
-    storage: 100Gi
-```
+2. Emergency Contact:
 
-2. Scaling Rules
-```yaml
-scaling:
-  rules:
-    - metric: cpu_usage
-      threshold: 80
-      action: scale_up
-```
-
-## Best Practices
-
-### Development
-
-1. Code Quality
-- Use linters
-- Run tests
-- Follow style guide
-- Document changes
-
-2. Testing
-- Unit tests
-- Integration tests
-- Performance tests
-- Security tests
-
-### Deployment
-
-1. Release Process
-- Version control
-- Change log
-- Backup first
-- Rollback plan
-
-2. Configuration
-- Use version control
-- Validate changes
-- Test in staging
-- Monitor deployment
-
-### Operations
-
-1. Monitoring
-- Watch metrics
-- Check logs
-- Set alerts
-- Regular audits
-
-2. Maintenance
-- Regular updates
-- Security patches
-- Performance tuning
-- Capacity planning
-
-## Getting Help
-
-### Support Channels
-
-1. Community Support
-- GitHub Issues
-- Stack Overflow
-- Discord Channel
-- Documentation
-
-2. Commercial Support
-- Email Support
-- Phone Support
-- SLA Coverage
-- Priority Response
-
-### Reporting Issues
-
-1. Issue Template
-```markdown
-## Problem Description
-[Describe the issue]
-
-## Steps to Reproduce
-1. [First Step]
-2. [Second Step]
-3. [Additional Steps...]
-
-## Expected Behavior
-[What you expected to happen]
-
-## Actual Behavior
-[What actually happened]
-
-## System Information
-- Version: [e.g. 1.0.0]
-- OS: [e.g. Ubuntu 20.04]
-- Python: [e.g. 3.8.5]
-
-## Logs
-```[logs]
-[Relevant log output]
-```
-```
-
-2. Debug Information
-```bash
-# Gather debug info
-plexure-api-search debug info > debug.log
-
-# Create report
-plexure-api-search report create
-``` 
+- emergency@plexure.com
+- 24/7 support
+- Critical issues

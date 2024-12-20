@@ -166,3 +166,4 @@ cython_debug/
 threading
 logging
 assistant_snippet*
+.models

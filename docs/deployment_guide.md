@@ -1,639 +1,421 @@
 # Deployment Guide
 
+## Overview
+
+This guide provides instructions for deploying the Plexure API Search system in various environments.
+
 ## System Requirements
 
 ### Hardware Requirements
 
-1. Minimum Requirements
-- CPU: 4 cores
-- RAM: 8GB
-- Storage: 50GB SSD
-- Network: 100Mbps
+1. **Minimum Requirements**
 
-2. Recommended Requirements
-- CPU: 8+ cores
-- RAM: 16GB+
-- Storage: 100GB+ SSD
-- Network: 1Gbps+
+   - CPU: 2 cores
+   - RAM: 4GB
+   - Storage: 10GB
 
-3. Production Requirements
-- CPU: 16+ cores
-- RAM: 32GB+
-- Storage: 500GB+ SSD
-- Network: 10Gbps+
+2. **Recommended Requirements**
+   - CPU: 4+ cores
+   - RAM: 8GB+
+   - Storage: 20GB+
+   - AVX2 support for FAISS optimization
 
 ### Software Requirements
 
-1. Operating System
-- Linux (Ubuntu 20.04+ recommended)
-- Container support
-- Systemd or similar init system
+1. **Base Requirements**
 
-2. Python Environment
-- Python 3.8+
-- pip/poetry
-- virtualenv
+   - Python 3.9+
+   - Poetry
+   - Git
+   - FAISS with AVX2 support
 
-3. Dependencies
-- Docker 20.10+
-- Docker Compose 2.0+
-- NVIDIA drivers (if using GPU)
-- CUDA 11.0+ (if using GPU)
+2. **Optional Requirements**
+   - Docker
+   - Prometheus (for metrics)
+   - Grafana (for monitoring)
 
 ## Installation
 
-### Package Installation
+### From Source
 
-1. Install system dependencies:
+1. Clone the repository:
+
 ```bash
-apt-get update
-apt-get install -y \
-    python3.8 \
-    python3.8-venv \
-    python3.8-dev \
-    build-essential \
-    git
+git clone https://github.com/yourusername/plexure-api-search.git
+cd plexure-api-search
 ```
 
-2. Create service user:
+2. Install dependencies:
+
 ```bash
-useradd -m -s /bin/bash plexure
+poetry install
 ```
 
-3. Install package:
+3. Set up environment:
+
 ```bash
-python3.8 -m pip install plexure-api-search
+cp .env.sample .env
 ```
 
-### Configuration
+### Using Docker
 
-1. Create configuration directory:
+1. Build image:
+
 ```bash
-mkdir -p /etc/plexure
-chown plexure:plexure /etc/plexure
+docker build -t plexure-api-search .
 ```
 
-2. Create configuration file:
+2. Run container:
+
 ```bash
-cat > /etc/plexure/config.yaml << EOF
-api:
-  dir: /var/lib/plexure/apis
-  formats: [yaml, json]
-  recursive: true
-
-model:
-  name: all-MiniLM-L6-v2
-  batch_size: 32
-  cache_dir: /var/cache/plexure
-
-vector_store:
-  type: pinecone
-  dimension: 384
-  metric: cosine
-  namespace: production
-
-search:
-  limit: 10
-  min_score: 0.5
-  timeout: 5.0
-  cache_ttl: 3600
-
-monitoring:
-  health_check_interval: 60
-  metrics_interval: 300
-  log_level: INFO
-  export_metrics: true
-  alert_on_errors: true
-EOF
+docker run -p 5555:5555 plexure-api-search
 ```
 
-3. Set environment variables:
+## Configuration
+
+### Environment Variables
+
+| Variable                     | Description                                  | Default                                | Required |
+| ---------------------------- | -------------------------------------------- | -------------------------------------- | -------- |
+| `ENVIRONMENT`                | Environment (development/staging/production) | development                            | Yes      |
+| `DEBUG`                      | Enable debug mode                            | false                                  | No       |
+| `API_DIR`                    | Directory containing API contracts           | assets/apis                            | Yes      |
+| `CACHE_DIR`                  | Cache directory                              | .cache/default                         | Yes      |
+| `METRICS_DIR`                | Metrics directory                            | .cache/metrics                         | Yes      |
+| `MODEL_NAME`                 | Embedding model name                         | sentence-transformers/all-MiniLM-L6-v2 | Yes      |
+| `MODEL_DIMENSION`            | Embedding dimension                          | 384                                    | Yes      |
+| `MODEL_BATCH_SIZE`           | Model batch size                             | 32                                     | No       |
+| `MODEL_NORMALIZE_EMBEDDINGS` | Normalize embeddings                         | true                                   | No       |
+| `ENABLE_TELEMETRY`           | Enable metrics collection                    | true                                   | No       |
+| `METRICS_BACKEND`            | Metrics backend (prometheus)                 | prometheus                             | No       |
+| `PUBLISHER_PORT`             | Event publisher port                         | 5555                                   | No       |
+| `MIN_SCORE`                  | Minimum similarity score                     | 0.1                                    | No       |
+| `TOP_K`                      | Default number of results                    | 10                                     | No       |
+| `EXPAND_QUERY`               | Enable query expansion                       | true                                   | No       |
+| `RERANK_RESULTS`             | Enable result reranking                      | true                                   | No       |
+| `LOG_LEVEL`                  | Logging level                                | INFO                                   | No       |
+
+### Configuration Files
+
+1. **Environment Files**
+
+   - `.env`: Environment variables
+   - `.env.sample`: Example environment variables
+
+2. **Configuration Files**
+   - `config.yaml`: Default configuration
+   - `config.dev.yaml`: Development configuration
+   - `config.prod.yaml`: Production configuration
+   - `config.test.yaml`: Test configuration
+
+## Directory Structure
+
+```
+plexure_api_search/
+├── assets/           # Static assets
+│   └── apis/        # API contracts
+├── .cache/          # Cache directory
+│   ├── default/     # Default cache
+│   └── metrics/     # Metrics cache
+├── .models/         # Model cache
+└── logs/           # Log files
+```
+
+## Deployment Steps
+
+### 1. Prepare Environment
+
+1. Create directories:
+
 ```bash
-cat > /etc/plexure/env << EOF
-PINECONE_API_KEY=your_api_key
-PINECONE_ENV=production
-MODEL_NAME=all-MiniLM-L6-v2
-LOG_LEVEL=INFO
-EOF
+mkdir -p assets/apis .cache/default .cache/metrics .models logs
 ```
 
-### Service Setup
+2. Set permissions:
 
-1. Create systemd service:
 ```bash
-cat > /etc/systemd/system/plexure.service << EOF
-[Unit]
-Description=Plexure API Search
-After=network.target
-
-[Service]
-Type=simple
-User=plexure
-Group=plexure
-EnvironmentFile=/etc/plexure/env
-ExecStart=/usr/local/bin/plexure-api-search serve
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
+chmod 755 assets/apis .cache/default .cache/metrics .models logs
 ```
 
-2. Enable and start service:
+### 2. Configure System
+
+1. Set environment variables:
+
 ```bash
-systemctl enable plexure
-systemctl start plexure
+export ENVIRONMENT=production
+export LOG_LEVEL=INFO
+export DEBUG=false
 ```
 
-## Docker Deployment
+2. Update configuration:
 
-### Docker Setup
-
-1. Create Dockerfile:
-```dockerfile
-FROM python:3.8-slim
-
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create user
-RUN useradd -m -s /bin/bash plexure
-
-# Install package
-RUN pip install plexure-api-search
-
-# Copy configuration
-COPY config.yaml /etc/plexure/config.yaml
-COPY env /etc/plexure/env
-
-# Set user
-USER plexure
-
-# Run service
-CMD ["plexure-api-search", "serve"]
-```
-
-2. Create docker-compose.yml:
-```yaml
-version: '3.8'
-
-services:
-  plexure:
-    build: .
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./apis:/var/lib/plexure/apis
-      - ./cache:/var/cache/plexure
-    env_file:
-      - ./env
-    restart: always
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-```
-
-3. Build and run:
 ```bash
-docker-compose up -d
+cp config.prod.yaml config.yaml
 ```
 
-## Kubernetes Deployment
+### 3. Initialize System
 
-### Kubernetes Setup
+1. Install package:
 
-1. Create namespace:
 ```bash
-kubectl create namespace plexure
+poetry install --no-dev
 ```
 
-2. Create config map:
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: plexure-config
-  namespace: plexure
-data:
-  config.yaml: |
-    api:
-      dir: /var/lib/plexure/apis
-      formats: [yaml, json]
-      recursive: true
-    # ... rest of config
-```
+2. Verify installation:
 
-3. Create secret:
 ```bash
-kubectl create secret generic plexure-secrets \
-  --from-literal=PINECONE_API_KEY=your_api_key \
-  --from-literal=PINECONE_ENV=production \
-  --namespace plexure
+poetry run python -m plexure_api_search --version
 ```
 
-4. Create deployment:
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: plexure
-  namespace: plexure
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: plexure
-  template:
-    metadata:
-      labels:
-        app: plexure
-    spec:
-      containers:
-      - name: plexure
-        image: plexure-api-search:latest
-        ports:
-        - containerPort: 8000
-        volumeMounts:
-        - name: config
-          mountPath: /etc/plexure
-        - name: apis
-          mountPath: /var/lib/plexure/apis
-        - name: cache
-          mountPath: /var/cache/plexure
-        envFrom:
-        - secretRef:
-            name: plexure-secrets
-        resources:
-          requests:
-            cpu: 1
-            memory: 2Gi
-          limits:
-            cpu: 2
-            memory: 4Gi
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 30
-          periodSeconds: 30
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 5
-          periodSeconds: 10
-      volumes:
-      - name: config
-        configMap:
-          name: plexure-config
-      - name: apis
-        persistentVolumeClaim:
-          claimName: plexure-apis
-      - name: cache
-        persistentVolumeClaim:
-          claimName: plexure-cache
-```
+### 4. Index API Contracts
 
-5. Create service:
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: plexure
-  namespace: plexure
-spec:
-  selector:
-    app: plexure
-  ports:
-  - port: 80
-    targetPort: 8000
-  type: LoadBalancer
-```
+1. Add API contracts:
 
-6. Apply configuration:
 ```bash
-kubectl apply -f k8s/
+cp /path/to/contracts/* assets/apis/
+```
+
+2. Run indexing:
+
+```bash
+poetry run python -m plexure_api_search index --clear
 ```
 
 ## Monitoring Setup
 
 ### Prometheus Integration
 
-1. Create Prometheus config:
+1. Configure Prometheus:
+
 ```yaml
 scrape_configs:
-  - job_name: 'plexure'
-    scrape_interval: 15s
+  - job_name: "plexure-api-search"
     static_configs:
-      - targets: ['localhost:8000']
+      - targets: ["localhost:5555"]
 ```
 
-2. Configure metrics endpoint:
-```yaml
-monitoring:
-  prometheus:
-    enabled: true
-    port: 8000
-    path: /metrics
+2. Available metrics:
+   - `embeddings_generated_total`
+   - `embedding_errors_total`
+   - `searches_performed_total`
+   - `search_errors_total`
+   - `contract_errors_total`
+   - `index_size`
+   - `metadata_size`
+   - `search_latency_seconds`
+   - `embedding_latency_seconds`
+
+### Logging
+
+1. Log files:
+
+   - `logs/app.log`: Application logs
+   - `logs/error.log`: Error logs
+   - `logs/access.log`: Access logs
+
+2. Log format:
+
 ```
-
-### Grafana Dashboard
-
-1. Import dashboard:
-```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -d @dashboards/plexure.json \
-  http://localhost:3000/api/dashboards/db
-```
-
-2. Configure alerts:
-```yaml
-alerting:
-  rules:
-  - alert: HighErrorRate
-    expr: rate(plexure_errors_total[5m]) > 0.1
-    for: 5m
-    labels:
-      severity: warning
-    annotations:
-      summary: High error rate detected
-```
-
-## Backup and Recovery
-
-### Backup Configuration
-
-1. Create backup script:
-```bash
-#!/bin/bash
-BACKUP_DIR="/var/backups/plexure"
-DATE=$(date +%Y%m%d_%H%M%S)
-
-# Backup configuration
-tar czf $BACKUP_DIR/config_$DATE.tar.gz /etc/plexure
-
-# Backup API files
-tar czf $BACKUP_DIR/apis_$DATE.tar.gz /var/lib/plexure/apis
-
-# Backup vector store
-plexure-api-search backup \
-  --output $BACKUP_DIR/vectors_$DATE.dump
-```
-
-2. Schedule backup:
-```bash
-echo "0 2 * * * /usr/local/bin/backup-plexure.sh" \
-  | crontab -u plexure -
-```
-
-### Recovery Procedure
-
-1. Restore configuration:
-```bash
-tar xzf config_backup.tar.gz -C /
-```
-
-2. Restore API files:
-```bash
-tar xzf apis_backup.tar.gz -C /
-```
-
-3. Restore vector store:
-```bash
-plexure-api-search restore \
-  --input vectors_backup.dump
-```
-
-## Scaling
-
-### Horizontal Scaling
-
-1. Configure load balancer:
-```nginx
-upstream plexure {
-    server plexure1:8000;
-    server plexure2:8000;
-    server plexure3:8000;
-}
-
-server {
-    listen 80;
-    location / {
-        proxy_pass http://plexure;
-    }
-}
-```
-
-2. Configure sharding:
-```yaml
-vector_store:
-  shards: 3
-  replicas: 2
-```
-
-### Vertical Scaling
-
-1. Increase resources:
-```yaml
-resources:
-  requests:
-    cpu: 4
-    memory: 8Gi
-  limits:
-    cpu: 8
-    memory: 16Gi
-```
-
-2. Optimize batch size:
-```yaml
-model:
-  batch_size: 64
+%(asctime)s - %(name)s - %(levelname)s - %(message)s
 ```
 
 ## Security
 
+### File Permissions
+
+1. Set ownership:
+
+```bash
+chown -R service_user:service_group plexure-api-search/
+```
+
+2. Set permissions:
+
+```bash
+find plexure-api-search/ -type d -exec chmod 755 {} \;
+find plexure-api-search/ -type f -exec chmod 644 {} \;
+```
+
 ### Network Security
 
-1. Configure firewall:
+1. Firewall rules:
+
 ```bash
-ufw allow 8000/tcp
-ufw enable
+# Allow metrics port
+ufw allow 5555/tcp
 ```
 
-2. Enable TLS:
-```yaml
-server:
-  tls:
-    enabled: true
-    cert: /etc/plexure/cert.pem
-    key: /etc/plexure/key.pem
-```
-
-### Access Control
-
-1. Configure authentication:
-```yaml
-auth:
-  type: jwt
-  secret: your_secret_key
-  expiry: 3600
-```
-
-2. Configure RBAC:
-```yaml
-rbac:
-  roles:
-    admin:
-      - "*"
-    user:
-      - "search:*"
-      - "index:read"
-```
+2. Rate limiting:
+   - Default: 100 requests per minute
+   - Configurable through environment variables
 
 ## Maintenance
+
+### Backup
+
+1. Backup directories:
+
+   - `assets/apis/`: API contracts
+   - `.cache/`: Cache data
+   - `.models/`: Model cache
+
+2. Backup command:
+
+```bash
+tar -czf backup.tar.gz assets/apis/ .cache/ .models/
+```
 
 ### Updates
 
 1. Update package:
+
 ```bash
-pip install -U plexure-api-search
+git pull
+poetry install
 ```
 
-2. Restart service:
+2. Rebuild index:
+
 ```bash
-systemctl restart plexure
+poetry run python -m plexure_api_search index --clear
 ```
 
-### Monitoring
+## Troubleshooting
 
-1. Check logs:
+### Common Issues
+
+1. **Search Returns No Results**
+
+   - Check if contracts are indexed
+   - Verify query format
+   - Check similarity threshold
+   - Review contract descriptions
+
+2. **Indexing Fails**
+
+   - Validate contract format
+   - Check file permissions
+   - Verify storage space
+   - Review error messages
+
+3. **Performance Issues**
+   - Monitor memory usage
+   - Check batch sizes
+   - Review cache settings
+   - Profile critical paths
+
+### Logs
+
+1. Check application logs:
+
 ```bash
-journalctl -u plexure -f
+tail -f logs/app.log
 ```
 
-2. Check metrics:
+2. Check error logs:
+
 ```bash
-curl http://localhost:8000/metrics
+tail -f logs/error.log
 ```
 
-### Troubleshooting
+### Metrics
 
-1. Check service status:
+1. Check metrics endpoint:
+
 ```bash
-systemctl status plexure
+curl http://localhost:5555/metrics
 ```
 
-2. Check health:
+2. Monitor system metrics:
+
 ```bash
-curl http://localhost:8000/health
+top -p $(pgrep -f plexure-api-search)
 ```
 
-3. Debug mode:
+## Health Checks
+
+### System Health
+
+1. Check process:
+
 ```bash
-LOG_LEVEL=DEBUG plexure-api-search serve
+systemctl status plexure-api-search
+```
+
+2. Check ports:
+
+```bash
+netstat -tulpn | grep 5555
+```
+
+### Application Health
+
+1. Check metrics:
+
+```bash
+curl http://localhost:5555/metrics
+```
+
+2. Run search test:
+
+```bash
+poetry run python -m plexure_api_search search "test"
 ```
 
 ## Performance Tuning
 
-### Memory Optimization
+### Model Settings
 
-1. Configure cache:
-```yaml
-cache:
-  type: redis
-  max_size: 1GB
-  ttl: 3600
-```
+1. Batch size:
 
-2. Configure batch processing:
-```yaml
-processing:
-  batch_size: 100
-  max_workers: 4
-```
-
-### Query Optimization
-
-1. Configure search:
-```yaml
-search:
-  cache_results: true
-  min_score: 0.5
-  timeout: 5.0
-```
-
-2. Configure vector store:
-```yaml
-vector_store:
-  index_type: hnsw
-  ef_search: 100
-  m: 16
-```
-
-## Disaster Recovery
-
-### Failover
-
-1. Configure replication:
-```yaml
-replication:
-  enabled: true
-  replicas: 3
-  sync: true
-```
-
-2. Configure backup:
-```yaml
-backup:
-  schedule: "0 2 * * *"
-  retention: 7
-  storage: s3
-```
-
-### Recovery
-
-1. Restore from backup:
 ```bash
-plexure-api-search restore \
-  --backup latest \
-  --target new-instance
+export MODEL_BATCH_SIZE=64
 ```
 
-2. Verify recovery:
+2. Vector dimension:
+
 ```bash
-plexure-api-search verify \
-  --source backup \
-  --target new-instance
+export MODEL_DIMENSION=384
 ```
 
-## Support
+### Cache Settings
 
-### Documentation
+1. Cache directories:
 
-1. Access documentation:
 ```bash
-plexure-api-search docs
+export CACHE_DIR=.cache/production
 ```
 
-2. Generate documentation:
+2. Cache cleanup:
+
 ```bash
-plexure-api-search docs generate
+find .cache/ -type f -mtime +30 -delete
 ```
 
-### Getting Help
+## Scaling
 
-1. Community support:
-- GitHub Issues
-- Discord channel
-- Stack Overflow
+### Vertical Scaling
 
-2. Commercial support:
-- Email: support@plexure.com
-- Phone: +1-XXX-XXX-XXXX
-- Web: https://support.plexure.com 
+1. Increase resources:
+
+   - CPU cores
+   - RAM
+   - Storage
+
+2. Update settings:
+   - Batch size
+   - Cache size
+   - Thread count
+
+### Horizontal Scaling
+
+1. Load balancing:
+
+   - Multiple instances
+   - Shared storage
+   - Distributed cache
+
+2. Monitoring:
+   - Instance health
+   - Resource usage
+   - Error rates

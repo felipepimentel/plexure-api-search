@@ -2,409 +2,420 @@
 
 ## Overview
 
-The Plexure API Search provides a powerful search engine for API contracts. This document describes all available endpoints and their usage.
+The Plexure API Search provides a command-line interface and a set of Python modules for searching and managing API endpoints. This document describes the available commands, modules, and their usage.
 
-## Base URL
+## Command Line Interface
 
-All API endpoints are relative to the base URL:
+### Search Command
 
-```
-http://localhost:8000/api/v1
-```
+Search for API endpoints using natural language queries.
 
-## Authentication
-
-Authentication is required for all endpoints. Use the `Authorization` header with a Bearer token:
-
-```
-Authorization: Bearer <your_token>
+```bash
+poetry run python -m plexure_api_search search [OPTIONS] QUERY
 ```
 
-## Endpoints
+#### Options:
 
-### Search
+- `--limit INTEGER`: Maximum number of results (default: 10)
+- `--min-score FLOAT`: Minimum similarity score (default: 0.1)
+- `--expand-query`: Enable query expansion
+- `--rerank`: Enable result reranking
+- `--format [text|json|yaml]`: Output format (default: text)
+- `--output FILE`: Output file (default: stdout)
+- `--profile`: Enable performance profiling
 
-#### Search API Contracts
+#### Examples:
 
-```http
-GET /search
+```bash
+# Basic search
+poetry run python -m plexure_api_search search "authentication endpoints"
+
+# Advanced search with options
+poetry run python -m plexure_api_search search \
+    "user management" \
+    --limit 5 \
+    --min-score 0.3 \
+    --expand-query \
+    --format json
+
+# Search with output file
+poetry run python -m plexure_api_search search \
+    "data operations" \
+    --output results.json
 ```
 
-Search for API contracts using natural language queries.
+### Index Command
 
-**Parameters:**
+Manage the API endpoint index.
 
-- `q` (string, required) - Search query
-- `limit` (integer, optional) - Maximum number of results (default: 10)
-- `offset` (integer, optional) - Result offset for pagination (default: 0)
-- `filters` (object, optional) - Search filters
-  - `method` (string) - HTTP method filter
-  - `path` (string) - Path filter
-  - `tags` (array) - Tag filters
-- `context` (object, optional) - Search context
-  - `user_id` (string) - User identifier
-  - `domain` (string) - Business domain
-  - `features` (array) - Enabled features
-
-**Example Request:**
-
-```http
-GET /search?q=create user&limit=5
-Authorization: Bearer <token>
+```bash
+poetry run python -m plexure_api_search index [OPTIONS]
 ```
 
-**Example Response:**
+#### Options:
 
-```json
+- `--clear`: Clear existing index
+- `--update`: Update existing index
+- `--status`: Show index status
+- `--include PATTERN`: Include file pattern
+- `--exclude PATTERN`: Exclude file pattern
+- `--batch-size INTEGER`: Processing batch size
+- `--async`: Enable async processing
+
+#### Examples:
+
+```bash
+# Clear and rebuild index
+poetry run python -m plexure_api_search index --clear
+
+# Update existing index
+poetry run python -m plexure_api_search index --update
+
+# Show index status
+poetry run python -m plexure_api_search index --status
+
+# Selective indexing
+poetry run python -m plexure_api_search index \
+    --include "auth/*.yaml" \
+    --exclude "internal/*.yaml"
+```
+
+### Config Command
+
+Manage configuration settings.
+
+```bash
+poetry run python -m plexure_api_search config [OPTIONS] COMMAND
+```
+
+#### Commands:
+
+- `show`: Show current configuration
+- `validate`: Validate configuration
+- `set KEY VALUE`: Set configuration value
+- `get KEY`: Get configuration value
+- `list`: List all settings
+
+#### Examples:
+
+```bash
+# Show configuration
+poetry run python -m plexure_api_search config show
+
+# Validate configuration
+poetry run python -m plexure_api_search config validate
+
+# Set configuration value
+poetry run python -m plexure_api_search config set MODEL_BATCH_SIZE 64
+
+# Get configuration value
+poetry run python -m plexure_api_search config get MODEL_NAME
+```
+
+## Python API
+
+### Search Module
+
+```python
+from plexure_api_search.search import Searcher
+
+# Initialize searcher
+searcher = Searcher()
+
+# Simple search
+results = searcher.search("authentication endpoints")
+
+# Advanced search
+results = searcher.search(
+    query="user management",
+    limit=5,
+    min_score=0.3,
+    expand_query=True,
+    rerank=True
+)
+
+# Process results
+for result in results:
+    print(f"Endpoint: {result.endpoint}")
+    print(f"Score: {result.score}")
+    print(f"Metadata: {result.metadata}")
+```
+
+### Index Module
+
+```python
+from plexure_api_search.indexing import Indexer
+
+# Initialize indexer
+indexer = Indexer()
+
+# Clear and rebuild index
+indexer.clear()
+indexer.index_directory("assets/apis")
+
+# Update index
+indexer.update()
+
+# Get index status
+status = indexer.status()
+print(f"Total endpoints: {status.total_endpoints}")
+print(f"Index size: {status.index_size}")
+```
+
+### Config Module
+
+```python
+from plexure_api_search.config import Config
+
+# Get configuration
+config = Config()
+
+# Access settings
+model_name = config.model_name
+batch_size = config.model_batch_size
+
+# Update settings
+config.update({
+    "model_batch_size": 64,
+    "min_score": 0.3
+})
+
+# Validate configuration
+config.validate()
+```
+
+## Data Models
+
+### SearchResult
+
+```python
+class SearchResult:
+    """Search result model."""
+
+    endpoint: str  # API endpoint path
+    score: float  # Similarity score
+    metadata: dict  # Additional metadata
+    method: str  # HTTP method
+    description: str  # Endpoint description
+    parameters: List[dict]  # Endpoint parameters
+```
+
+### EndpointData
+
+```python
+class EndpointData:
+    """API endpoint data model."""
+
+    path: str  # Endpoint path
+    method: str  # HTTP method
+    summary: str  # Short description
+    description: str  # Full description
+    parameters: List[dict]  # Parameters
+    responses: dict  # Response schemas
+    metadata: dict  # Additional metadata
+```
+
+### IndexStatus
+
+```python
+class IndexStatus:
+    """Index status model."""
+
+    total_endpoints: int  # Total indexed endpoints
+    index_size: int  # Size in bytes
+    last_updated: datetime  # Last update time
+    metadata_size: int  # Metadata size
+    vector_dimension: int  # Vector dimension
+```
+
+## Events
+
+### Event Types
+
+1. Search Events:
+
+```python
 {
-  "results": [
-    {
-      "method": "POST",
-      "path": "/users",
-      "description": "Create a new user",
-      "parameters": [...],
-      "responses": [...],
-      "score": 0.95,
-      "metadata": {
-        "source": "users.yaml",
-        "version": "1.0.0"
-      }
-    },
-    ...
-  ],
-  "total": 42,
-  "took": 0.125
+    "type": "search",
+    "timestamp": "2024-01-20T10:30:00Z",
+    "query": str,
+    "results": int,
+    "duration_ms": float,
+    "success": bool
 }
 ```
 
-### Indexing
+2. Index Events:
 
-#### Index API Files
-
-```http
-POST /index
-```
-
-Index API contract files.
-
-**Parameters:**
-
-- `path` (string, optional) - Path to API files (default: configured API directory)
-- `force` (boolean, optional) - Force reindexing (default: false)
-- `async` (boolean, optional) - Run indexing asynchronously (default: false)
-
-**Example Request:**
-
-```http
-POST /index
-Authorization: Bearer <token>
-Content-Type: application/json
-
+```python
 {
-  "path": "/path/to/apis",
-  "force": true
+    "type": "index",
+    "timestamp": "2024-01-20T10:30:00Z",
+    "operation": str,
+    "endpoints": int,
+    "duration_ms": float,
+    "success": bool
 }
 ```
 
-**Example Response:**
+3. Error Events:
 
-```json
+```python
 {
-  "job_id": "abc123",
-  "status": "started",
-  "message": "Indexing started"
+    "type": "error",
+    "timestamp": "2024-01-20T10:30:00Z",
+    "component": str,
+    "message": str,
+    "traceback": str
 }
 ```
 
-#### Get Index Status
+## Metrics
 
-```http
-GET /index/status
-```
+### Available Metrics
 
-Get current indexing status.
+1. Counter Metrics:
 
-**Example Response:**
+- `embeddings_generated_total`
+- `embedding_errors_total`
+- `searches_performed_total`
+- `search_errors_total`
+- `contract_errors_total`
 
-```json
-{
-  "status": "running",
-  "progress": 75,
-  "total_files": 100,
-  "processed_files": 75,
-  "errors": [],
-  "started_at": "2024-01-01T12:00:00Z",
-  "updated_at": "2024-01-01T12:01:00Z"
-}
-```
+2. Gauge Metrics:
 
-### Monitoring
+- `index_size`
+- `metadata_size`
 
-#### Get Health Status
+3. Histogram Metrics:
 
-```http
-GET /health
-```
+- `search_latency_seconds`
+- `embedding_latency_seconds`
 
-Get system health status.
+### Accessing Metrics
 
-**Example Response:**
+```python
+from plexure_api_search.monitoring import metrics
 
-```json
-{
-  "status": "healthy",
-  "components": {
-    "search": {
-      "status": "healthy",
-      "latency": 0.050
-    },
-    "index": {
-      "status": "healthy",
-      "documents": 1000
-    },
-    "vector_store": {
-      "status": "healthy",
-      "vectors": 5000
-    }
-  },
-  "version": "1.0.0"
-}
-```
+# Get metric value
+total_searches = metrics.get_counter("searches_performed_total")
 
-#### Get Metrics
+# Observe value
+metrics.observe_value("search_latency_seconds", 0.125)
 
-```http
-GET /metrics
-```
-
-Get system metrics.
-
-**Example Response:**
-
-```json
-{
-  "search": {
-    "requests": 1000,
-    "latency_p95": 0.200,
-    "errors": 5
-  },
-  "index": {
-    "documents": 1000,
-    "vectors": 5000,
-    "last_update": "2024-01-01T12:00:00Z"
-  },
-  "resources": {
-    "cpu_usage": 45.5,
-    "memory_usage": 512.0,
-    "disk_usage": 1024.0
-  }
-}
-```
-
-### Analytics
-
-#### Get Search Analytics
-
-```http
-GET /analytics/search
-```
-
-Get search analytics data.
-
-**Parameters:**
-
-- `start` (string, optional) - Start time (ISO 8601)
-- `end` (string, optional) - End time (ISO 8601)
-- `interval` (string, optional) - Aggregation interval (default: 1h)
-
-**Example Response:**
-
-```json
-{
-  "total_queries": 1000,
-  "unique_queries": 250,
-  "avg_latency": 0.150,
-  "success_rate": 0.995,
-  "top_queries": [
-    {
-      "query": "create user",
-      "count": 100,
-      "avg_latency": 0.125
-    },
-    ...
-  ],
-  "trends": {
-    "queries_per_hour": [...],
-    "latency_p95": [...],
-    "error_rate": [...]
-  }
-}
-```
-
-### Experiments
-
-#### Create Experiment
-
-```http
-POST /experiments
-```
-
-Create new A/B test experiment.
-
-**Request Body:**
-
-```json
-{
-  "name": "ranking_algorithm",
-  "description": "Test new ranking algorithm",
-  "variants": [
-    {
-      "name": "control",
-      "weight": 0.5,
-      "config": {
-        "algorithm": "default"
-      }
-    },
-    {
-      "name": "treatment",
-      "weight": 0.5,
-      "config": {
-        "algorithm": "improved"
-      }
-    }
-  ],
-  "metrics": [
-    "click_through_rate",
-    "conversion_rate"
-  ],
-  "duration": "7d"
-}
-```
-
-**Example Response:**
-
-```json
-{
-  "experiment_id": "exp123",
-  "status": "created",
-  "start_time": "2024-01-01T12:00:00Z",
-  "end_time": "2024-01-08T12:00:00Z"
-}
-```
-
-#### Get Experiment Results
-
-```http
-GET /experiments/{experiment_id}/results
-```
-
-Get experiment results.
-
-**Example Response:**
-
-```json
-{
-  "experiment": {
-    "name": "ranking_algorithm",
-    "status": "running",
-    "progress": 75
-  },
-  "results": {
-    "control": {
-      "users": 5000,
-      "metrics": {
-        "click_through_rate": 0.125,
-        "conversion_rate": 0.050
-      }
-    },
-    "treatment": {
-      "users": 5000,
-      "metrics": {
-        "click_through_rate": 0.150,
-        "conversion_rate": 0.075
-      }
-    }
-  },
-  "significance": {
-    "click_through_rate": {
-      "p_value": 0.001,
-      "significant": true
-    },
-    "conversion_rate": {
-      "p_value": 0.002,
-      "significant": true
-    }
-  }
-}
+# Export metrics
+metrics_data = metrics.export()
 ```
 
 ## Error Handling
 
-The API uses standard HTTP status codes and returns error details in the response body:
+### Exception Types
 
-```json
-{
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Invalid parameter value",
-    "details": {
-      "parameter": "limit",
-      "reason": "Must be between 1 and 100"
-    }
-  }
-}
+```python
+class SearchError(Exception):
+    """Base class for search errors."""
+    pass
+
+class IndexError(Exception):
+    """Base class for index errors."""
+    pass
+
+class ConfigError(Exception):
+    """Base class for configuration errors."""
+    pass
+
+class ModelError(Exception):
+    """Base class for model errors."""
+    pass
 ```
 
-Common status codes:
+### Error Handling Example
 
-- `200 OK` - Success
-- `400 Bad Request` - Invalid parameters
-- `401 Unauthorized` - Missing or invalid authentication
-- `403 Forbidden` - Insufficient permissions
-- `404 Not Found` - Resource not found
-- `429 Too Many Requests` - Rate limit exceeded
-- `500 Internal Server Error` - Server error
+```python
+from plexure_api_search.exceptions import SearchError
 
-## Rate Limiting
-
-The API implements rate limiting per user and endpoint. Limits are included in response headers:
-
-```
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1640995200
+try:
+    results = searcher.search("query")
+except SearchError as e:
+    logger.error(f"Search failed: {e}")
+    # Handle error
 ```
 
-When rate limit is exceeded, the API returns `429 Too Many Requests` with a `Retry-After` header.
+## Best Practices
 
-## Pagination
+### Search Optimization
 
-List endpoints support pagination using `limit` and `offset` parameters. Response includes pagination metadata:
+1. Query Construction:
 
-```json
-{
-  "results": [...],
-  "pagination": {
-    "total": 100,
-    "limit": 10,
-    "offset": 0,
-    "next": "/api/v1/search?q=test&limit=10&offset=10",
-    "previous": null
-  }
-}
+```python
+# Good
+results = searcher.search("find user authentication endpoints")
+
+# Bad
+results = searcher.search("auth")
 ```
 
-## Versioning
+2. Result Processing:
 
-The API is versioned using URL path prefix (e.g. `/api/v1`). Breaking changes will be released in new API versions.
+```python
+# Process all results
+for result in results:
+    if result.score >= 0.5:
+        process_high_confidence(result)
+    else:
+        process_low_confidence(result)
+```
 
-## SDKs
+### Performance Optimization
 
-Official SDKs are available for:
+1. Batch Processing:
 
-- Python: [plexure-api-search-python](https://github.com/plexure/plexure-api-search-python)
-- JavaScript: [plexure-api-search-js](https://github.com/plexure/plexure-api-search-js)
+```python
+# Process in batches
+indexer.index_directory(
+    "assets/apis",
+    batch_size=64,
+    async_processing=True
+)
+```
+
+2. Caching:
+
+```python
+# Enable result caching
+searcher = Searcher(
+    cache_enabled=True,
+    cache_ttl=3600
+)
+```
 
 ## Support
 
-For API support and bug reports, please open an issue on GitHub or contact support@plexure.com. 
+### Getting Help
+
+1. Documentation:
+
+- Read the docs
+- API reference
+- Examples
+
+2. Community:
+
+- GitHub issues
+- Discussions
+- Stack Overflow
+
+### Reporting Issues
+
+1. Bug Reports:
+
+- Clear description
+- Reproduction steps
+- System information
+- Error messages
+
+2. Feature Requests:
+
+- Use case
+- Expected behavior
+- Example usage

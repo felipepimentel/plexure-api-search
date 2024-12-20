@@ -1,28 +1,19 @@
 # User Guide
 
-## Introduction
+## Overview
 
-Welcome to the Plexure API Search user guide. This document will help you get started with using the system and explain its main features.
+Plexure API Search is a tool for searching and exploring API endpoints using natural language queries. This guide will help you get started with using the tool effectively.
 
-## Table of Contents
-
-1. [Getting Started](#getting-started)
-2. [Basic Usage](#basic-usage)
-3. [Advanced Features](#advanced-features)
-4. [Best Practices](#best-practices)
-5. [Troubleshooting](#troubleshooting)
-
-## Getting Started
+## Installation
 
 ### Prerequisites
 
-Before using Plexure API Search, ensure you have:
+1. Python 3.9 or higher
+2. Poetry package manager
+3. Git (for source installation)
+4. FAISS with AVX2 support
 
-- Python 3.8 or higher
-- Access to a Pinecone instance
-- API contract files in YAML or JSON format
-
-### Installation
+### Quick Install
 
 1. Install using pip:
 
@@ -30,373 +21,393 @@ Before using Plexure API Search, ensure you have:
 pip install plexure-api-search
 ```
 
-2. Set up environment variables:
+2. Install using Poetry:
 
 ```bash
-# Core settings
-export API_DIR=/path/to/apis
-export MODEL_NAME=all-MiniLM-L6-v2
-
-# Pinecone settings
-export PINECONE_API_KEY=your_api_key
-export PINECONE_ENV=your_environment
-
-# Optional settings
-export CACHE_TTL=3600
-export LOG_LEVEL=INFO
+git clone https://github.com/yourusername/plexure-api-search.git
+cd plexure-api-search
+poetry install
 ```
 
-3. Initialize the system:
+### Configuration
+
+1. Create environment file:
 
 ```bash
-plexure-api-search init
+cp .env.sample .env
+```
+
+2. Configure settings:
+
+```bash
+# Required settings
+ENVIRONMENT=development
+API_DIR=assets/apis
+CACHE_DIR=.cache/default
+MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+
+# Optional settings
+DEBUG=false
+LOG_LEVEL=INFO
+MODEL_BATCH_SIZE=32
 ```
 
 ## Basic Usage
 
-### Indexing API Files
+### Searching Endpoints
 
-1. Index your API files:
+1. Simple search:
 
 ```bash
-plexure-api-search index
+poetry run python -m plexure_api_search search "find authentication endpoints"
 ```
 
-This will:
-- Scan your API directory
-- Parse API contracts
-- Generate embeddings
-- Store vectors in Pinecone
-
-Monitor indexing progress:
+2. Advanced search:
 
 ```bash
-plexure-api-search monitor
+poetry run python -m plexure_api_search search \
+    --query "find user management endpoints" \
+    --limit 5 \
+    --min-score 0.5
 ```
 
-### Searching APIs
+### Managing API Contracts
 
-1. Basic search:
+1. Index contracts:
 
 ```bash
-plexure-api-search search "create user account"
+poetry run python -m plexure_api_search index --clear
 ```
 
-2. Search with filters:
+2. Update index:
 
 ```bash
-plexure-api-search search "create user" --method POST --tags user,account
-```
-
-3. View detailed results:
-
-```bash
-plexure-api-search search "payment process" --verbose
-```
-
-### Managing the Index
-
-1. Update index:
-
-```bash
-plexure-api-search index --update
-```
-
-2. Clear index:
-
-```bash
-plexure-api-search index --clear
+poetry run python -m plexure_api_search index --update
 ```
 
 3. Check index status:
 
 ```bash
-plexure-api-search index --status
+poetry run python -m plexure_api_search index --status
 ```
 
 ## Advanced Features
 
-### Semantic Search
+### Query Optimization
 
-The system uses advanced semantic search capabilities:
-
-1. Query Understanding
-- Natural language processing
-- Intent detection
-- Query expansion
-- Spell checking
-
-2. Contextual Search
-- Business domain awareness
-- User context
-- Feature flags
-
-Example:
+1. Query expansion:
 
 ```bash
-plexure-api-search search "user signup" \
-  --domain retail \
-  --context '{"features": ["premium"]}'
+export EXPAND_QUERY=true
+poetry run python -m plexure_api_search search "auth"
 ```
 
-### Personalization
-
-Customize search results based on:
-
-1. User Preferences
-- Search history
-- Frequently used APIs
-- Favorite endpoints
-
-2. Business Rules
-- Access permissions
-- Usage quotas
-- API versions
-
-Example:
+2. Result reranking:
 
 ```bash
-plexure-api-search search "order status" \
-  --user-id user123 \
-  --preferences '{"versions": ["v2"]}'
+export RERANK_RESULTS=true
+poetry run python -m plexure_api_search search "users"
 ```
 
-### Analytics
+### Performance Tuning
 
-Monitor search performance:
+1. Batch processing:
 
-1. Usage Analytics
 ```bash
-plexure-api-search analytics --type usage
+export MODEL_BATCH_SIZE=64
+poetry run python -m plexure_api_search index
 ```
 
-2. Performance Metrics
+2. Cache management:
+
 ```bash
-plexure-api-search analytics --type performance
+export CACHE_DIR=.cache/production
+poetry run python -m plexure_api_search search "endpoints"
 ```
 
-3. Quality Metrics
+## Common Tasks
+
+### Finding Endpoints
+
+1. Authentication endpoints:
+
 ```bash
-plexure-api-search analytics --type quality
+poetry run python -m plexure_api_search search "authentication and authorization"
 ```
 
-### A/B Testing
+2. User management:
 
-Run experiments:
-
-1. Create experiment:
 ```bash
-plexure-api-search experiment create \
-  --name "ranking_algorithm" \
-  --variants "default,improved" \
-  --duration 7d
+poetry run python -m plexure_api_search search "user creation and management"
 ```
 
-2. View results:
+3. Data operations:
+
 ```bash
-plexure-api-search experiment results ranking_algorithm
+poetry run python -m plexure_api_search search "data retrieval and updates"
+```
+
+### Managing Contracts
+
+1. Add new contract:
+
+```bash
+cp new-api.yaml assets/apis/
+poetry run python -m plexure_api_search index --update
+```
+
+2. Remove contract:
+
+```bash
+rm assets/apis/old-api.yaml
+poetry run python -m plexure_api_search index --clear
+```
+
+3. Update contract:
+
+```bash
+cp updated-api.yaml assets/apis/
+poetry run python -m plexure_api_search index --update
 ```
 
 ## Best Practices
 
-### Search Optimization
+### Effective Searching
 
-1. Query Construction
-- Use natural language
-- Be specific but concise
-- Include relevant context
+1. Use descriptive queries:
 
-2. Filter Usage
-- Use filters to narrow results
-- Combine multiple filters
-- Order filters by importance
+- Good: "find user authentication endpoints"
+- Bad: "auth"
 
-3. Result Processing
-- Check relevance scores
-- Review multiple results
-- Use detailed view for important queries
+2. Include context:
 
-### Performance Optimization
+- Good: "create new user account with email"
+- Bad: "create user"
 
-1. Indexing
-- Regular updates
-- Incremental indexing
-- Optimal batch size
+3. Be specific:
 
-2. Caching
-- Enable result caching
-- Set appropriate TTL
-- Monitor cache hit rate
+- Good: "update user profile information"
+- Bad: "user update"
 
-3. Resource Usage
-- Monitor memory usage
-- Scale vector store
-- Use async operations
+### Contract Management
 
-### Monitoring
+1. Organize contracts:
 
-1. Health Checks
-```bash
-plexure-api-search monitor --health
+```
+assets/apis/
+├── auth/
+│   ├── authentication.yaml
+│   └── authorization.yaml
+├── users/
+│   ├── profiles.yaml
+│   └── management.yaml
+└── data/
+    ├── queries.yaml
+    └── mutations.yaml
 ```
 
-2. Performance Monitoring
-```bash
-plexure-api-search monitor --performance
+2. Use consistent formatting:
+
+```yaml
+paths:
+  /users:
+    post:
+      summary: Create new user
+      description: Detailed description of the endpoint
+      parameters:
+        - name: email
+          description: User's email address
 ```
 
-3. Error Tracking
-```bash
-plexure-api-search monitor --errors
+3. Include metadata:
+
+```yaml
+info:
+  title: User Management API
+  version: 1.0.0
+  description: API for managing user accounts
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. Search Quality
-- Problem: Poor search results
-- Solution: Check query construction, update index
-- Prevention: Regular quality monitoring
+1. No results found:
 
-2. Performance
-- Problem: Slow response time
-- Solution: Enable caching, optimize queries
-- Prevention: Performance monitoring
+- Check if contracts are indexed
+- Verify query format
+- Lower similarity threshold
 
-3. Indexing
-- Problem: Failed indexing
-- Solution: Check file formats, permissions
-- Prevention: Validate files before indexing
+```bash
+export MIN_SCORE=0.1
+```
+
+2. Poor search results:
+
+- Use more specific queries
+- Enable query expansion
+- Check contract descriptions
+
+```bash
+export EXPAND_QUERY=true
+```
+
+3. Indexing fails:
+
+- Check file permissions
+- Verify contract format
+- Monitor storage space
+
+```bash
+df -h
+du -sh .cache/
+```
 
 ### Error Messages
 
-Common error messages and solutions:
+1. "No contracts found":
 
-1. "Invalid API format"
-- Check file syntax
-- Validate against schema
-- Use correct format (YAML/JSON)
+```bash
+# Check API directory
+ls -la assets/apis/
 
-2. "Connection failed"
-- Check network connectivity
-- Verify credentials
-- Check service status
+# Verify contract format
+poetry run python -m plexure_api_search validate
+```
 
-3. "Resource limit exceeded"
-- Scale resources
-- Optimize usage
-- Check quotas
+2. "Model loading failed":
 
-### Getting Help
+```bash
+# Clear model cache
+rm -rf .models/*
 
-1. Documentation
-- API documentation
-- Developer guide
-- Deployment guide
+# Verify model name
+echo $MODEL_NAME
+```
 
-2. Support
-- GitHub issues
-- Support email
-- Community forum
+3. "Search failed":
 
-3. Updates
-- Release notes
-- Change log
-- Migration guides
+```bash
+# Check logs
+tail -f logs/app.log
+
+# Verify configuration
+poetry run python -m plexure_api_search config show
+```
 
 ## Configuration Reference
 
-### Core Settings
+### Environment Variables
 
-```yaml
-# config.yaml
-api:
-  dir: /path/to/apis
-  formats: [yaml, json]
-  recursive: true
+| Variable           | Description             | Default                                | Required |
+| ------------------ | ----------------------- | -------------------------------------- | -------- |
+| `ENVIRONMENT`      | Environment name        | development                            | Yes      |
+| `API_DIR`          | API contracts directory | assets/apis                            | Yes      |
+| `CACHE_DIR`        | Cache directory         | .cache/default                         | Yes      |
+| `MODEL_NAME`       | Embedding model         | sentence-transformers/all-MiniLM-L6-v2 | Yes      |
+| `DEBUG`            | Debug mode              | false                                  | No       |
+| `LOG_LEVEL`        | Logging level           | INFO                                   | No       |
+| `MODEL_BATCH_SIZE` | Batch size              | 32                                     | No       |
+| `MIN_SCORE`        | Minimum score           | 0.1                                    | No       |
+| `TOP_K`            | Result limit            | 10                                     | No       |
 
-model:
-  name: all-MiniLM-L6-v2
-  batch_size: 32
-  cache_dir: .cache
+### Command Line Options
 
-vector_store:
-  type: pinecone
-  dimension: 384
-  metric: cosine
-  namespace: api-search
-
-search:
-  limit: 10
-  min_score: 0.5
-  timeout: 5.0
-  cache_ttl: 3600
-```
-
-### Feature Flags
-
-```yaml
-features:
-  spell_check: true
-  query_expansion: true
-  personalization: true
-  analytics: true
-  caching: true
-  monitoring: true
-```
-
-### Monitoring Settings
-
-```yaml
-monitoring:
-  health_check_interval: 60
-  metrics_interval: 300
-  log_level: INFO
-  export_metrics: true
-  alert_on_errors: true
-```
-
-## Command Reference
-
-### Core Commands
+1. Search options:
 
 ```bash
-# Initialize system
-plexure-api-search init [--config path/to/config.yaml]
-
-# Index APIs
-plexure-api-search index [--path dir] [--force] [--async]
-
-# Search APIs
-plexure-api-search search <query> [--filters json] [--limit n]
-
-# Monitor system
-plexure-api-search monitor [--type health|metrics|logs]
+poetry run python -m plexure_api_search search --help
 ```
 
-### Management Commands
+2. Index options:
 
 ```bash
-# Manage cache
-plexure-api-search cache [clear|status]
-
-# Manage experiments
-plexure-api-search experiment [create|list|results]
-
-# Export data
-plexure-api-search export [analytics|metrics|logs]
+poetry run python -m plexure_api_search index --help
 ```
 
-### Utility Commands
+3. Config options:
 
 ```bash
-# Validate configuration
-plexure-api-search validate [--config file]
+poetry run python -m plexure_api_search config --help
+```
 
-# Check version
-plexure-api-search version
+## Examples
 
-# Show help
-plexure-api-search --help
-``` 
+### Basic Examples
+
+1. Simple search:
+
+```bash
+poetry run python -m plexure_api_search search "login endpoints"
+```
+
+2. Index contracts:
+
+```bash
+poetry run python -m plexure_api_search index
+```
+
+3. Show config:
+
+```bash
+poetry run python -m plexure_api_search config show
+```
+
+### Advanced Examples
+
+1. Complex search:
+
+```bash
+poetry run python -m plexure_api_search search \
+    "find endpoints for managing user preferences" \
+    --limit 10 \
+    --min-score 0.3 \
+    --expand-query
+```
+
+2. Selective indexing:
+
+```bash
+poetry run python -m plexure_api_search index \
+    --include "auth/*.yaml" \
+    --exclude "internal/*.yaml"
+```
+
+3. Performance monitoring:
+
+```bash
+poetry run python -m plexure_api_search search \
+    "authentication" \
+    --profile
+```
+
+## Support
+
+### Getting Help
+
+1. Documentation:
+
+- Read the docs
+- API reference
+- Examples
+
+2. Community:
+
+- GitHub issues
+- Discussions
+- Stack Overflow
+
+### Reporting Issues
+
+1. Bug reports:
+
+- Clear description
+- Steps to reproduce
+- System information
+- Error messages
+
+2. Feature requests:
+
+- Use case
+- Expected behavior
+- Example usage

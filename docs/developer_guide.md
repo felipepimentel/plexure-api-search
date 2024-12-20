@@ -1,658 +1,587 @@
 # Developer Guide
 
-## Architecture Overview
+## Overview
 
-### Core Components
+This guide provides information for developers working on the Plexure API Search project. It covers the project structure, development setup, coding standards, and contribution guidelines.
 
-1. Search Engine
-- Semantic search using SentenceTransformers
-- Hybrid search combining vector and keyword search
-- Query understanding and expansion
-- Result ranking and reranking
-
-2. Indexing System
-- API contract parsing
-- Vector generation
-- Incremental indexing
-- Transaction handling
-
-3. Vector Store
-- Pinecone integration
-- Connection pooling
-- Batch operations
-- Sharding support
-
-4. Service Layer
-- Dependency injection
-- Event-driven architecture
-- Circuit breaker pattern
-- Rate limiting
-
-### Directory Structure
+## Project Structure
 
 ```
 plexure_api_search/
-├── cli/                    # Command-line interface
-│   ├── commands/          # CLI commands
-│   └── ui/                # TUI components
-├── config/                # Configuration management
-├── di/                    # Dependency injection
-├── embedding/             # Vector embeddings
-├── indexing/              # API indexing
-├── integrations/          # External integrations
-├── monitoring/            # System monitoring
-├── plugins/               # Plugin system
-├── search/                # Search functionality
-├── services/              # Service layer
-└── utils/                 # Utility functions
+├── plexure_api_search/     # Main package
+│   ├── __init__.py        # Package initialization
+│   ├── __main__.py        # CLI entry point
+│   ├── config.py          # Configuration management
+│   ├── cli.py             # Command-line interface
+│   ├── indexing/          # Indexing components
+│   │   ├── __init__.py
+│   │   ├── indexer.py     # API contract indexing
+│   │   └── vectorizer.py  # Vector generation
+│   ├── search/            # Search components
+│   │   ├── __init__.py
+│   │   ├── searcher.py    # Search engine
+│   │   └── storage.py     # Data storage
+│   ├── services/          # Core services
+│   │   ├── __init__.py
+│   │   ├── events.py      # Event handling
+│   │   ├── models.py      # Model management
+│   │   └── vector_store.py # Vector storage
+│   └── utils/             # Utility functions
+│       ├── __init__.py
+│       ├── logging.py     # Logging setup
+│       └── metrics.py     # Metrics collection
+├── tests/                 # Test suite
+│   ├── __init__.py
+│   ├── conftest.py       # Test configuration
+│   ├── test_indexing.py  # Indexing tests
+│   └── test_search.py    # Search tests
+├── docs/                 # Documentation
+├── assets/              # Static assets
+└── scripts/            # Development scripts
 ```
 
 ## Development Setup
 
+### Prerequisites
+
+1. Python 3.9+
+2. Poetry
+3. Git
+4. FAISS with AVX2 support
+
+### Installation
+
 1. Clone repository:
+
 ```bash
-git clone https://github.com/plexure/plexure-api-search.git
+git clone https://github.com/yourusername/plexure-api-search.git
 cd plexure-api-search
 ```
 
-2. Create virtual environment:
+2. Install dependencies:
+
 ```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-venv\Scripts\activate     # Windows
+poetry install
 ```
 
-3. Install dependencies:
+3. Set up pre-commit hooks:
+
 ```bash
-pip install -e ".[dev]"
+poetry run pre-commit install
 ```
 
-4. Set up pre-commit hooks:
+4. Create environment file:
+
 ```bash
-pre-commit install
+cp .env.sample .env
+```
+
+### Development Environment
+
+1. Activate environment:
+
+```bash
+poetry shell
+```
+
+2. Run tests:
+
+```bash
+pytest
+```
+
+3. Run linting:
+
+```bash
+flake8
+black .
+isort .
+```
+
+## Code Style
+
+### Python Style Guide
+
+1. Follow PEP 8
+2. Maximum line length: 100 characters
+3. Use type hints
+4. Write docstrings
+5. Use meaningful names
+
+### Example Code
+
+```python
+from typing import List, Optional
+
+def process_endpoints(
+    endpoints: List[str],
+    batch_size: int = 32,
+    normalize: bool = True
+) -> Optional[List[float]]:
+    """Process API endpoints and generate vectors.
+
+    Args:
+        endpoints: List of endpoint strings
+        batch_size: Size of processing batches
+        normalize: Whether to normalize vectors
+
+    Returns:
+        List of vectors or None if processing fails
+    """
+    try:
+        # Process endpoints
+        vectors = []
+        for batch in chunks(endpoints, batch_size):
+            batch_vectors = generate_vectors(batch)
+            if normalize:
+                batch_vectors = normalize_vectors(batch_vectors)
+            vectors.extend(batch_vectors)
+        return vectors
+    except Exception as e:
+        logger.error(f"Failed to process endpoints: {e}")
+        return None
+```
+
+### Docstring Format
+
+```python
+def function_name(arg1: type1, arg2: type2) -> return_type:
+    """Short description.
+
+    Longer description if needed.
+
+    Args:
+        arg1: Description of arg1
+        arg2: Description of arg2
+
+    Returns:
+        Description of return value
+
+    Raises:
+        ErrorType: Description of error condition
+    """
+```
+
+## Testing
+
+### Test Structure
+
+1. Unit Tests:
+
+```python
+def test_vector_generation():
+    """Test vector generation for endpoints."""
+    # Arrange
+    endpoints = ["GET /api/v1/users", "POST /api/v1/auth"]
+
+    # Act
+    vectors = generate_vectors(endpoints)
+
+    # Assert
+    assert len(vectors) == 2
+    assert all(len(v) == 384 for v in vectors)
+```
+
+2. Integration Tests:
+
+```python
+def test_search_workflow():
+    """Test complete search workflow."""
+    # Setup
+    index_endpoints(test_contracts)
+
+    # Execute
+    results = search("find user endpoints")
+
+    # Verify
+    assert len(results) > 0
+    assert all(r.score >= 0.5 for r in results)
+```
+
+### Running Tests
+
+1. All tests:
+
+```bash
+pytest
+```
+
+2. Specific tests:
+
+```bash
+pytest tests/test_search.py
+```
+
+3. With coverage:
+
+```bash
+pytest --cov=plexure_api_search
 ```
 
 ## Development Workflow
 
-### Code Style
+### Feature Development
 
-1. Follow PEP 8 guidelines
-2. Use type hints
-3. Maximum line length: 100 characters
-4. Use docstrings for all public functions/classes
-5. Keep functions focused and single-purpose
+1. Create branch:
 
-Example:
-```python
-from typing import List, Optional
-
-def process_query(
-    query: str,
-    filters: Optional[dict] = None,
-    limit: int = 10,
-) -> List[dict]:
-    """Process search query with filters.
-
-    Args:
-        query: Search query string
-        filters: Optional search filters
-        limit: Maximum number of results
-
-    Returns:
-        List of search results
-    """
-    # Implementation
-```
-
-### Testing
-
-1. Write unit tests:
-```python
-def test_process_query():
-    # Arrange
-    query = "test query"
-    filters = {"method": "GET"}
-    
-    # Act
-    results = process_query(query, filters)
-    
-    # Assert
-    assert len(results) <= 10
-    assert all(r["method"] == "GET" for r in results)
-```
-
-2. Run tests:
 ```bash
-pytest tests/
-pytest tests/ -v                 # Verbose
-pytest tests/ -k test_search     # Filter tests
-pytest tests/ --cov=plexure_api_search  # Coverage
+git checkout -b feature/new-feature
 ```
 
-3. Test coverage requirements:
-- Minimum coverage: 80%
-- Critical paths: 100%
-- Edge cases covered
+2. Make changes:
 
-### Documentation
+- Write tests first
+- Implement feature
+- Update documentation
 
-1. Code Documentation
-- Clear docstrings
-- Type hints
-- Inline comments for complex logic
-- Examples in docstrings
+3. Run checks:
 
-2. API Documentation
-- OpenAPI/Swagger specs
-- Example requests/responses
-- Error handling
-- Authentication
-
-3. Architecture Documentation
-- Component diagrams
-- Sequence diagrams
-- Data flow diagrams
-- Decision records
-
-### Dependency Management
-
-1. Adding dependencies:
 ```bash
-poetry add package-name
-poetry add package-name --dev  # Dev dependency
+# Run tests
+pytest
+
+# Check style
+flake8
+black .
+isort .
+
+# Check types
+mypy .
 ```
 
-2. Updating dependencies:
+4. Commit changes:
+
 ```bash
-poetry update
-poetry update package-name
+git add .
+git commit -m "feat: add new feature"
 ```
 
-3. Dependency guidelines:
-- Pin versions
-- Regular updates
-- Security checks
-- Minimize dependencies
+### Code Review
 
-### Version Control
+1. Pull Request Template:
 
-1. Branch naming:
-- feature/description
-- fix/description
-- refactor/description
-- docs/description
+```markdown
+## Description
 
-2. Commit messages:
+Brief description of changes
+
+## Changes
+
+- Change 1
+- Change 2
+
+## Testing
+
+- [ ] Unit tests
+- [ ] Integration tests
+- [ ] Manual testing
+
+## Documentation
+
+- [ ] Updated docstrings
+- [ ] Updated README
+- [ ] Updated guides
 ```
-type(scope): description
 
-- type: feat, fix, docs, style, refactor, test, chore
-- scope: component affected
-- description: clear, concise change description
-```
+2. Review Checklist:
 
-3. Pull requests:
-- Clear title and description
-- Link related issues
-- Tests included
-- Documentation updated
+- Code style compliance
+- Test coverage
+- Documentation updates
+- Performance impact
+- Security considerations
 
-### Monitoring and Profiling
+## Debugging
 
-1. Performance monitoring:
+### Logging
+
+1. Configure logging:
+
 ```python
-from plexure_api_search.monitoring import profiler
+import logging
 
-@profiler.profile
-async def search_endpoint(query: str) -> dict:
-    # Implementation
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 ```
 
-2. Metrics collection:
+2. Log levels:
+
 ```python
-from plexure_api_search.monitoring import metrics
-
-metrics.increment("search_requests")
-metrics.timing("search_latency", duration)
+logger.debug("Detailed information")
+logger.info("General information")
+logger.warning("Warning messages")
+logger.error("Error messages")
+logger.critical("Critical errors")
 ```
 
-3. Error tracking:
+### Debugging Tools
+
+1. Debug configuration:
+
 ```python
-from plexure_api_search.monitoring import logger
-
-try:
-    result = await process_query(query)
-except Exception as e:
-    logger.error(f"Search failed: {e}", exc_info=True)
-    raise
+if settings.DEBUG:
+    breakpoint()
 ```
 
-### Deployment
+2. Performance profiling:
 
-1. Build package:
-```bash
-poetry build
-```
-
-2. Run checks:
-```bash
-poetry run pytest
-poetry run mypy .
-poetry run black --check .
-poetry run isort --check .
-```
-
-3. Deploy steps:
-- Version bump
-- Changelog update
-- Tag release
-- Build package
-- Run checks
-- Deploy package
-- Verify deployment
-
-## Component Details
-
-### Search Engine
-
-1. Query Processing
 ```python
-async def process_query(query: str) -> str:
-    # Spell checking
-    query = await spell_checker.check(query)
-    
-    # Query expansion
-    query = await query_expander.expand(query)
-    
-    # Intent detection
-    intent = await intent_detector.detect(query)
-    
-    return query
+import cProfile
+
+def profile_function():
+    profiler = cProfile.Profile()
+    profiler.enable()
+    # Code to profile
+    profiler.disable()
+    profiler.print_stats()
 ```
 
-2. Vector Search
-```python
-async def vector_search(
-    query: str,
-    limit: int = 10,
-) -> List[dict]:
-    # Generate query vector
-    vector = await embedder.encode(query)
-    
-    # Search vector store
-    results = await vector_store.search(
-        vector=vector,
-        limit=limit,
-    )
-    
-    return results
+## API Documentation
+
+### OpenAPI Schema
+
+1. Endpoint documentation:
+
+```yaml
+paths:
+  /search:
+    post:
+      summary: Search API endpoints
+      parameters:
+        - name: query
+          in: body
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResults"
 ```
 
-3. Result Ranking
-```python
-async def rank_results(
-    results: List[dict],
-    query: str,
-) -> List[dict]:
-    # Calculate relevance scores
-    scores = await ranker.score(results, query)
-    
-    # Sort by score
-    ranked = sorted(
-        results,
-        key=lambda x: scores[x["id"]],
-        reverse=True,
-    )
-    
-    return ranked
-```
+2. Model documentation:
 
-### Indexing System
-
-1. Contract Parsing
-```python
-async def parse_contract(path: str) -> dict:
-    # Read file
-    content = await file_utils.read_file(path)
-    
-    # Parse format
-    if path.endswith(".yaml"):
-        contract = yaml.safe_load(content)
-    else:
-        contract = json.loads(content)
-    
-    # Validate schema
-    validator.validate(contract)
-    
-    return contract
-```
-
-2. Vector Generation
-```python
-async def generate_vectors(
-    contracts: List[dict],
-) -> List[np.ndarray]:
-    # Extract text
-    texts = [
-        extract_text(contract)
-        for contract in contracts
-    ]
-    
-    # Generate embeddings
-    vectors = await embedder.encode_batch(texts)
-    
-    return vectors
-```
-
-3. Index Management
-```python
-async def update_index(
-    contracts: List[dict],
-    vectors: List[np.ndarray],
-) -> None:
-    # Start transaction
-    async with vector_store.transaction():
-        # Delete old vectors
-        await vector_store.delete([
-            contract["id"]
-            for contract in contracts
-        ])
-        
-        # Insert new vectors
-        await vector_store.insert(
-            ids=[contract["id"] for contract in contracts],
-            vectors=vectors,
-            metadata=contracts,
-        )
-```
-
-### Service Layer
-
-1. Dependency Injection
-```python
-from dependency_injector import containers, providers
-
-class Container(containers.DeclarativeContainer):
-    config = providers.Singleton(Config)
-    
-    vector_store = providers.Singleton(
-        VectorStore,
-        config=config,
-    )
-    
-    search_service = providers.Singleton(
-        SearchService,
-        vector_store=vector_store,
-        config=config,
-    )
-```
-
-2. Event Publishing
-```python
-async def publish_event(event: Event) -> None:
-    # Serialize event
-    message = event.to_json()
-    
-    # Publish to topics
-    await publisher.publish(
-        topic="events",
-        message=message,
-    )
-```
-
-3. Circuit Breaker
-```python
-async def execute_with_breaker(
-    command: Callable,
-    *args,
-    **kwargs,
-) -> Any:
-    # Check circuit state
-    if breaker.is_open:
-        raise CircuitBreakerError()
-    
-    try:
-        # Execute command
-        result = await command(*args, **kwargs)
-        breaker.success()
-        return result
-    except Exception as e:
-        breaker.failure()
-        raise
-```
-
-## Plugin Development
-
-1. Create plugin:
-```python
-from plexure_api_search.plugins import SearchPlugin
-
-class CustomPlugin(SearchPlugin):
-    def __init__(self, config: Config):
-        self.config = config
-    
-    async def process_query(
-        self,
-        query: str,
-    ) -> str:
-        # Custom processing
-        return query
-```
-
-2. Register plugin:
-```python
-# plugin.py
-from plexure_api_search.plugins import registry
-
-registry.register(CustomPlugin)
-```
-
-3. Use plugin:
-```python
-# Load plugins
-plugins = registry.load_plugins()
-
-# Process query
-for plugin in plugins:
-    query = await plugin.process_query(query)
+```yaml
+components:
+  schemas:
+    SearchResult:
+      type: object
+      properties:
+        endpoint:
+          type: string
+        score:
+          type: number
+        metadata:
+          type: object
 ```
 
 ## Performance Optimization
 
-1. Caching
+### Profiling
+
+1. CPU profiling:
+
 ```python
-from plexure_api_search.cache import cache
-
-@cache(ttl=3600)
-async def expensive_operation(
-    key: str,
-) -> dict:
-    # Expensive computation
-    return result
-```
-
-2. Batch Processing
-```python
-async def process_batch(
-    items: List[dict],
-    batch_size: int = 100,
-) -> List[dict]:
-    results = []
-    for i in range(0, len(items), batch_size):
-        batch = items[i:i + batch_size]
-        batch_results = await process_items(batch)
-        results.extend(batch_results)
-    return results
-```
-
-3. Connection Pooling
-```python
-async def get_connection():
-    async with pool.acquire() as conn:
-        return conn
-```
-
-## Error Handling
-
-1. Custom Exceptions
-```python
-class SearchError(Exception):
-    """Base class for search errors."""
-    pass
-
-class QueryError(SearchError):
-    """Invalid query error."""
-    pass
-
-class IndexError(SearchError):
-    """Index operation error."""
+@profile
+def expensive_function():
+    # Code to profile
     pass
 ```
 
-2. Error Recovery
+2. Memory profiling:
+
 ```python
-async def with_retry(
-    operation: Callable,
-    max_retries: int = 3,
-    delay: float = 1.0,
-) -> Any:
-    for attempt in range(max_retries):
-        try:
-            return await operation()
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise
-            await asyncio.sleep(delay * (attempt + 1))
+from memory_profiler import profile
+
+@profile
+def memory_intensive():
+    # Code to profile
+    pass
 ```
 
-3. Graceful Degradation
+### Optimization Tips
+
+1. Vectorization:
+
 ```python
-async def search_with_fallback(
-    query: str,
-) -> List[dict]:
-    try:
-        # Try vector search
-        results = await vector_search(query)
-    except Exception as e:
-        # Fall back to keyword search
-        results = await keyword_search(query)
-    return results
+# Instead of loops
+vectors = []
+for text in texts:
+    vector = model.encode(text)
+    vectors.append(vector)
+
+# Use batch processing
+vectors = model.encode(texts, batch_size=32)
+```
+
+2. Caching:
+
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=1000)
+def expensive_computation(input_data):
+    # Expensive operation
+    pass
 ```
 
 ## Security
 
-1. Input Validation
-```python
-from pydantic import BaseModel, validator
+### Best Practices
 
-class SearchRequest(BaseModel):
-    query: str
-    filters: Optional[dict] = None
-    
-    @validator("query")
-    def validate_query(cls, v):
-        if len(v) > 1000:
-            raise ValueError("Query too long")
-        return v
+1. Input validation:
+
+```python
+def validate_input(query: str) -> bool:
+    """Validate search query."""
+    if not query:
+        raise ValueError("Empty query")
+    if len(query) > 1000:
+        raise ValueError("Query too long")
+    return True
 ```
 
-2. Rate Limiting
-```python
-from plexure_api_search.security import rate_limit
+2. Error handling:
 
-@rate_limit(
-    requests=100,
-    window=60,
-)
-async def search_endpoint(
-    request: Request,
-) -> Response:
-    # Handle request
+```python
+def secure_operation():
+    try:
+        # Sensitive operation
+        pass
+    except Exception as e:
+        logger.error(f"Operation failed: {e}")
+        raise SecurityError("Operation failed")
 ```
 
-3. Authentication
-```python
-from plexure_api_search.security import require_auth
+### Security Checks
 
-@require_auth
-async def protected_endpoint(
-    request: Request,
-) -> Response:
-    # Handle request
+1. Dependency scanning:
+
+```bash
+poetry run safety check
 ```
 
-## Monitoring
+2. Static analysis:
 
-1. Health Checks
-```python
-async def check_health() -> dict:
-    return {
-        "status": "healthy",
-        "components": {
-            "search": await search_health(),
-            "index": await index_health(),
-            "store": await store_health(),
-        },
-    }
+```bash
+poetry run bandit -r .
 ```
 
-2. Metrics Collection
-```python
-async def collect_metrics() -> dict:
-    return {
-        "search": {
-            "requests": counter.get("search_requests"),
-            "latency": histogram.get("search_latency"),
-            "errors": counter.get("search_errors"),
-        },
-    }
+## Contribution Guidelines
+
+### Commit Messages
+
+1. Format:
+
+```
+type(scope): description
+
+[optional body]
+
+[optional footer]
 ```
 
-3. Alerting
-```python
-async def check_alerts() -> None:
-    metrics = await collect_metrics()
-    if metrics["errors"] > threshold:
-        await send_alert(
-            level="error",
-            message="High error rate detected",
-            metrics=metrics,
-        )
+2. Types:
+
+- feat: New feature
+- fix: Bug fix
+- docs: Documentation
+- style: Formatting
+- refactor: Code restructuring
+- test: Testing
+- chore: Maintenance
+
+### Pull Requests
+
+1. Branch naming:
+
+- feature/description
+- fix/description
+- docs/description
+
+2. Review process:
+
+- Create PR
+- Pass CI checks
+- Code review
+- Address feedback
+- Merge
+
+## Release Process
+
+### Version Management
+
+1. Update version:
+
+```bash
+poetry version patch  # or minor/major
 ```
 
-## Contributing
+2. Update changelog:
 
-1. Issue Guidelines
-- Use issue templates
-- Clear reproduction steps
+```markdown
+## [1.0.1] - 2024-01-20
+
+### Added
+
+- New feature X
+
+### Fixed
+
+- Bug in Y
+```
+
+### Release Steps
+
+1. Create release:
+
+```bash
+git tag -a v1.0.1 -m "Release v1.0.1"
+git push origin v1.0.1
+```
+
+2. Build package:
+
+```bash
+poetry build
+```
+
+3. Publish:
+
+```bash
+poetry publish
+```
+
+## Support
+
+### Getting Help
+
+1. Documentation:
+
+- Read the docs
+- API reference
+- Examples
+
+2. Community:
+
+- GitHub issues
+- Discussions
+- Stack Overflow
+
+### Reporting Issues
+
+1. Bug reports:
+
+- Clear description
+- Reproduction steps
 - System information
-- Logs/error messages
+- Logs
 
-2. Pull Request Guidelines
-- Reference issues
-- Clean commit history
-- Tests included
-- Documentation updated
+2. Feature requests:
 
-3. Review Guidelines
-- Code quality
-- Test coverage
-- Performance impact
-- Security implications
-
-## Resources
-
-1. Documentation
-- [API Documentation](docs/api.md)
-- [User Guide](docs/user_guide.md)
-- [Architecture](docs/architecture.md)
-
-2. Examples
-- [Basic Usage](examples/basic.py)
-- [Advanced Features](examples/advanced.py)
-- [Plugin Development](examples/plugin.py)
-
-3. Tools
-- [Development Tools](tools/README.md)
-- [Benchmarking](tools/benchmark.py)
-- [Migration Scripts](tools/migrate.py) 
+- Use case
+- Expected behavior
+- Implementation ideas
