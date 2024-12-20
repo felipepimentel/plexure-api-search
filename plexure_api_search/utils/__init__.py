@@ -1,8 +1,5 @@
-"""Utility functions and classes for the API search project."""
+"""Utility modules."""
 
-from .cache import DiskCache
+from .file import find_api_files
 
-__all__ = [
-    # Cache utilities
-    "DiskCache",
-]
+__all__ = ["find_api_files"]

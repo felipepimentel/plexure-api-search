@@ -1,3 +1,5 @@
-from .metrics_manager import metrics_manager
+"""Monitoring modules."""
 
-__all__ = ["metrics_manager"]
+from .metrics import MetricsManager, metrics_manager
+
+__all__ = ["MetricsManager", "metrics_manager"]

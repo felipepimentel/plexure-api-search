@@ -2,27 +2,28 @@
 
 import logging
 import os
+import pickle
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import faiss
 import numpy as np
-from dependency_injector.wiring import inject
 
-from ..config import config_instance
+from ..config import config
 from ..monitoring.metrics import MetricsManager
-from .models import model_service
+from ..services.models import model_service
 
 logger = logging.getLogger(__name__)
 
 class VectorStore:
-    """Vector store for embeddings."""
+    """Vector store for managing embeddings."""
 
     def __init__(self):
         """Initialize vector store."""
         self.metrics = MetricsManager()
         self.index = None
         self.dimension = None
+        self.metadata = {}
         self.initialized = False
 
     def initialize(self) -> None:
@@ -37,16 +38,11 @@ class VectorStore:
             logger.info(f"Using embedding dimension: {self.dimension}")
 
             # Create index
-            self.index = faiss.IndexFlatIP(self.dimension)
+            self.index = faiss.IndexIDMap(faiss.IndexFlatIP(self.dimension))
             logger.info(f"Created FAISS index with dimension {self.dimension}")
 
             # Load existing index if available
-            index_path = self._get_index_path()
-            if index_path.exists():
-                logger.info(f"Loading existing index from {index_path}")
-                self.index = faiss.read_index(str(index_path))
-                logger.info(f"Loaded index with {self.index.ntotal} vectors")
-
+            self._load_index()
             self.initialized = True
             logger.info("Vector store initialized")
 
@@ -56,112 +52,13 @@ class VectorStore:
 
     def cleanup(self) -> None:
         """Clean up vector store."""
-        if self.index is not None:
-            # Save index
-            index_path = self._get_index_path()
-            logger.info(f"Saving index with {self.index.ntotal} vectors to {index_path}")
-            faiss.write_index(self.index, str(index_path))
-
+        if self.initialized:
+            self._save_index()
             self.index = None
+            self.dimension = None
+            self.metadata = {}
             self.initialized = False
             logger.info("Vector store cleaned up")
-
-    def store_vectors(self, vectors: np.ndarray, ids: Optional[np.ndarray] = None) -> None:
-        """Store vectors in index.
-        
-        Args:
-            vectors: Vectors to store (n_vectors x dimension)
-            ids: Optional vector IDs (n_vectors)
-        """
-        if not self.initialized:
-            self.initialize()
-
-        try:
-            # Validate inputs
-            if vectors.ndim != 2:
-                raise ValueError(f"Expected 2D array, got shape {vectors.shape}")
-            if vectors.shape[1] != self.dimension:
-                raise ValueError(
-                    f"Expected vectors with dimension {self.dimension}, got {vectors.shape[1]}"
-                )
-            if ids is not None and len(ids) != len(vectors):
-                raise ValueError(
-                    f"Number of IDs ({len(ids)}) does not match number of vectors ({len(vectors)})"
-                )
-
-            # Log vector info
-            logger.debug(f"Adding {len(vectors)} vectors to index")
-            logger.debug(f"Vector shape: {vectors.shape}")
-            if ids is not None:
-                logger.debug(f"ID array shape: {ids.shape}")
-                logger.debug(f"ID array type: {ids.dtype}")
-                logger.debug(f"Sample IDs: {ids[:5] if len(ids) > 5 else ids}")
-
-            # Add vectors
-            if ids is not None:
-                self.index.add_with_ids(vectors, ids)
-            else:
-                self.index.add(vectors)
-
-            logger.info(f"Added {len(vectors)} vectors to index")
-            logger.debug(f"Index now contains {self.index.ntotal} vectors")
-
-            # Update metrics
-            self.metrics.increment(
-                "vectors_stored",
-                {"count": len(vectors), "total": self.index.ntotal},
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to store vectors: {e}")
-            self.metrics.increment("vector_store_errors")
-            raise
-
-    def search_vectors(
-        self, query_vector: np.ndarray, k: int = 10
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """Search for similar vectors.
-        
-        Args:
-            query_vector: Query vector
-            k: Number of results to return
-            
-        Returns:
-            Tuple of (distances, indices)
-        """
-        if not self.initialized:
-            self.initialize()
-
-        try:
-            # Validate input
-            if query_vector.ndim != 1:
-                raise ValueError(f"Expected 1D array, got shape {query_vector.shape}")
-            if len(query_vector) != self.dimension:
-                raise ValueError(
-                    f"Expected vector with dimension {self.dimension}, got {len(query_vector)}"
-                )
-
-            # Reshape query vector
-            query_vector = query_vector.reshape(1, -1)
-
-            # Search
-            distances, indices = self.index.search(query_vector, k)
-            
-            # Get first row since we only have one query vector
-            distances = distances[0]
-            indices = indices[0]
-
-            # Log results
-            logger.debug(f"Found {len(indices)} results")
-            if len(indices) > 0:
-                logger.debug(f"Distance range: {np.min(distances)} to {np.max(distances)}")
-
-            return distances, indices
-
-        except Exception as e:
-            logger.error(f"Failed to search vectors: {e}")
-            self.metrics.increment("vector_search_errors")
-            raise
 
     def clear(self) -> None:
         """Clear the vector store."""
@@ -170,27 +67,169 @@ class VectorStore:
 
         try:
             # Reset index
-            self.index = faiss.IndexFlatIP(self.dimension)
+            self.index = faiss.IndexIDMap(faiss.IndexFlatIP(self.dimension))
+            self.metadata = {}
             logger.info("Cleared vector store")
 
-            # Delete saved index
+            # Delete saved files
             index_path = self._get_index_path()
-            if index_path.exists():
-                index_path.unlink()
+            if os.path.exists(index_path):
+                os.remove(index_path)
                 logger.info(f"Deleted saved index at {index_path}")
 
-            self.metrics.increment("vector_store_cleared")
+            metadata_path = self._get_metadata_path()
+            if os.path.exists(metadata_path):
+                os.remove(metadata_path)
+                logger.info(f"Deleted saved metadata at {metadata_path}")
 
         except Exception as e:
             logger.error(f"Failed to clear vector store: {e}")
-            self.metrics.increment("vector_store_errors")
             raise
 
-    def _get_index_path(self) -> Path:
+    def store_vectors(
+        self,
+        vectors: np.ndarray,
+        ids: np.ndarray,
+        metadata: Optional[List[Dict]] = None,
+    ) -> None:
+        """Store vectors in the index.
+        
+        Args:
+            vectors: Vector array (n_vectors x dimension)
+            ids: Vector IDs
+            metadata: Optional metadata for each vector
+        """
+        if not self.initialized:
+            self.initialize()
+
+        try:
+            # Validate inputs
+            if vectors.shape[1] != self.dimension:
+                raise ValueError(
+                    f"Vector dimension {vectors.shape[1]} does not match "
+                    f"index dimension {self.dimension}"
+                )
+
+            if len(vectors) != len(ids):
+                raise ValueError(
+                    f"Number of vectors {len(vectors)} does not match "
+                    f"number of IDs {len(ids)}"
+                )
+
+            if metadata and len(metadata) != len(vectors):
+                raise ValueError(
+                    f"Number of metadata entries {len(metadata)} does not match "
+                    f"number of vectors {len(vectors)}"
+                )
+
+            # Add vectors to index
+            self.index.add_with_ids(vectors, ids)
+            logger.info(f"Added {len(vectors)} vectors to index")
+
+            # Store metadata
+            if metadata:
+                for i, meta in zip(ids, metadata):
+                    self.metadata[int(i)] = meta
+                logger.info(f"Stored metadata for {len(metadata)} vectors")
+
+            # Update metrics
+            self.metrics.set_gauge("index_size", self.index.ntotal)
+            self.metrics.set_gauge("metadata_size", len(self.metadata))
+
+        except Exception as e:
+            logger.error(f"Failed to store vectors: {e}")
+            raise
+
+    def search_vectors(
+        self,
+        query_vector: np.ndarray,
+        k: int = 10,
+    ) -> Tuple[np.ndarray, np.ndarray, List[Dict]]:
+        """Search for similar vectors.
+        
+        Args:
+            query_vector: Query vector
+            k: Number of results to return
+            
+        Returns:
+            Tuple of (distances, indices, metadata)
+        """
+        if not self.initialized:
+            self.initialize()
+
+        try:
+            # Validate inputs
+            if query_vector.shape[1] != self.dimension:
+                raise ValueError(
+                    f"Query vector dimension {query_vector.shape[1]} does not match "
+                    f"index dimension {self.dimension}"
+                )
+
+            # Search index
+            k = min(k, self.index.ntotal)
+            distances, indices = self.index.search(query_vector, k)
+
+            # Get metadata
+            metadata = []
+            for idx in indices[0]:
+                meta = self.metadata.get(int(idx), {})
+                metadata.append(meta)
+
+            return distances, indices, metadata
+
+        except Exception as e:
+            logger.error(f"Failed to search vectors: {e}")
+            raise
+
+    def _get_index_path(self) -> str:
         """Get path to saved index file."""
-        cache_dir = Path(config_instance.cache_dir)
+        cache_dir = Path(config.cache_dir) / config.environment
         cache_dir.mkdir(parents=True, exist_ok=True)
-        return cache_dir / "faiss.index"
+        return str(cache_dir / "faiss.index")
+
+    def _get_metadata_path(self) -> str:
+        """Get path to saved metadata file."""
+        cache_dir = Path(config.cache_dir) / config.environment
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return str(cache_dir / "metadata.pkl")
+
+    def _load_index(self) -> None:
+        """Load saved index and metadata."""
+        try:
+            # Load index
+            index_path = self._get_index_path()
+            if os.path.exists(index_path):
+                self.index = faiss.read_index(index_path)
+                logger.info(f"Loaded index with {self.index.ntotal} vectors")
+
+            # Load metadata
+            metadata_path = self._get_metadata_path()
+            if os.path.exists(metadata_path):
+                with open(metadata_path, "rb") as f:
+                    self.metadata = pickle.load(f)
+                logger.info(f"Loaded metadata for {len(self.metadata)} vectors")
+
+        except Exception as e:
+            logger.error(f"Failed to load index: {e}")
+            raise
+
+    def _save_index(self) -> None:
+        """Save index and metadata."""
+        try:
+            # Save index
+            index_path = self._get_index_path()
+            faiss.write_index(self.index, index_path)
+            logger.info(f"Saved index with {self.index.ntotal} vectors")
+
+            # Save metadata
+            metadata_path = self._get_metadata_path()
+            with open(metadata_path, "wb") as f:
+                pickle.dump(self.metadata, f)
+            logger.info(f"Saved metadata for {len(self.metadata)} vectors")
+
+        except Exception as e:
+            logger.error(f"Failed to save index: {e}")
+            raise
 
 # Global instance
 vector_store = VectorStore() 

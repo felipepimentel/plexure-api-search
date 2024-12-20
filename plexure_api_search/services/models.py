@@ -1,25 +1,24 @@
-"""Model service for text embeddings."""
+"""Model service."""
 
 import logging
 from typing import List, Union
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from dependency_injector.wiring import inject
 
-from ..config import config_instance
+from ..config import config
 from ..monitoring.metrics import MetricsManager
 
 logger = logging.getLogger(__name__)
 
 class ModelService:
-    """Model service for text embeddings."""
+    """Model service for generating embeddings."""
 
     def __init__(self):
         """Initialize model service."""
         self.metrics = MetricsManager()
         self.model = None
-        self.dimension = 768  # Default dimension for all-MiniLM-L6-v2
+        self.dimension = None
         self.initialized = False
 
     def initialize(self) -> None:
@@ -29,14 +28,11 @@ class ModelService:
 
         try:
             # Load model
-            model_name = config_instance.model_name
+            model_name = config.model_name
             logger.info(f"Loading model: {model_name}")
             self.model = SentenceTransformer(model_name)
-            
-            # Get embedding dimension
             self.dimension = self.model.get_sentence_embedding_dimension()
             logger.info(f"Model loaded with embedding dimension: {self.dimension}")
-
             self.initialized = True
             logger.info("Model service initialized")
 
@@ -46,67 +42,51 @@ class ModelService:
 
     def cleanup(self) -> None:
         """Clean up model service."""
-        if self.model is not None:
+        if self.initialized:
             self.model = None
+            self.dimension = None
             self.initialized = False
             logger.info("Model service cleaned up")
 
-    def encode(
-        self,
-        texts: Union[str, List[str]],
-        batch_size: int = 32,
-        normalize: bool = True,
-    ) -> np.ndarray:
-        """Encode texts to embeddings.
+    def get_embeddings(self, text: Union[str, List[str]]) -> np.ndarray:
+        """Get embeddings for text.
         
         Args:
-            texts: Text or list of texts to encode
-            batch_size: Batch size for encoding
-            normalize: Whether to L2 normalize embeddings
+            text: Text to embed (string or list of strings)
             
         Returns:
-            Array of embeddings (n_texts x dimension)
+            Embeddings array (n_texts x dimension)
         """
         if not self.initialized:
             self.initialize()
 
         try:
-            # Convert single text to list
-            if isinstance(texts, str):
-                texts = [texts]
+            # Convert single string to list
+            if isinstance(text, str):
+                text = [text]
 
-            # Log encoding info
-            logger.debug(f"Encoding {len(texts)} texts")
-            logger.debug(f"Sample text: {texts[0][:100]}...")
-
-            # Encode texts
+            # Generate embeddings
             embeddings = self.model.encode(
-                texts,
-                batch_size=batch_size,
-                normalize_embeddings=normalize,
-                show_progress_bar=False,
+                text,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
             )
 
-            # Convert to numpy array
-            embeddings = np.array(embeddings)
-
-            # Log embedding info
-            logger.debug(f"Generated embeddings shape: {embeddings.shape}")
-            logger.debug(f"Embeddings type: {embeddings.dtype}")
-            if len(embeddings) > 0:
-                logger.debug(f"First embedding norm: {np.linalg.norm(embeddings[0])}")
+            # Handle 3D output (batch_size x 1 x dimension)
+            if embeddings.ndim == 3:
+                embeddings = embeddings.squeeze(1)
 
             # Update metrics
-            self.metrics.increment(
-                "texts_encoded",
-                {"count": len(texts), "batch_size": batch_size},
+            self.metrics.increment_counter(
+                "embeddings_generated",
+                value=len(text),
             )
 
             return embeddings
 
         except Exception as e:
-            logger.error(f"Failed to encode texts: {e}")
-            self.metrics.increment("encoding_errors")
+            logger.error(f"Failed to generate embeddings: {e}")
+            self.metrics.increment_counter("embedding_errors")
             raise
 
 # Global instance

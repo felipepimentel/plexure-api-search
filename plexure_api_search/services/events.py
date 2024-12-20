@@ -13,7 +13,7 @@ from dependency_injector.providers import Provider
 import zmq
 from zmq.error import ZMQError
 
-from ..config import config_instance
+from ..config import config
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +57,10 @@ class PublisherService:
         self.socket = self.context.socket(zmq.PUB)
         self.started = False
         try:
-            self.socket.bind(f"tcp://*:{config_instance.publisher_port}")
+            self.socket.bind(f"tcp://*:{config.publisher_port}")
         except ZMQError as e:
             if e.errno == 98:  # Address already in use
-                logger.warning(f"Publisher port {config_instance.publisher_port} already in use")
+                logger.warning(f"Publisher port {config.publisher_port} already in use")
             else:
                 logger.error(f"Failed to bind publisher socket: {e}")
 
@@ -108,7 +108,7 @@ class SubscriberService:
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.SUB)
         try:
-            self.socket.connect(f"tcp://localhost:{config_instance.publisher_port}")
+            self.socket.connect(f"tcp://localhost:{config.publisher_port}")
             self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
         except ZMQError as e:
             logger.warning(f"Failed to connect subscriber socket: {e}")

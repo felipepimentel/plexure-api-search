@@ -1,5 +1,5 @@
-"""Search package."""
+"""API search functionality."""
 
-from .searcher import APISearcher, api_searcher
+from .searcher import APISearcher, searcher
 
-__all__ = ["APISearcher", "api_searcher"] 
+__all__ = ["searcher", "APISearcher"] 

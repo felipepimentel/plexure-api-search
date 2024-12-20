@@ -5,7 +5,7 @@ from typing import Optional, Sequence
 
 import click
 
-from . import initialize, Environment
+from .initialize import initialize
 from .cli.commands import cli
 
 def main(args: Optional[Sequence[str]] = None) -> int:

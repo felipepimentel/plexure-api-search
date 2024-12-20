@@ -9,7 +9,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-class APIContractParser:
+class APIParser:
     """Parser for API contracts."""
 
     def parse_contract(self, file_path: str) -> List[Dict[str, Any]]:
