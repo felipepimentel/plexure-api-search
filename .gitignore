@@ -167,3 +167,13 @@ threading
 logging
 assistant_snippet*
 .models
+.data
+.logs
+.cache
+.temp
+.backup
+.old
+.temp
+.tmp
+.session
+.session.json
